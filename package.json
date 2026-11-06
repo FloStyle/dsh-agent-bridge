@@ -1,0 +1,49 @@
+{
+  "name": "dsh-agent-bridge",
+  "version": "0.5.0",
+  "description": "Local HTTP + SSE bridge so any MCP agent can list, read, prompt and follow DeepSeek Harness sessions.",
+  "type": "module",
+  "main": "./index.js",
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE",
+    "mcp"
+  ],
+  "keywords": [
+    "dsh-plugin"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FloStyle/dsh-agent-bridge.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "bin": {
+    "dsh-agent-bridge-mcp": "mcp/mcp.mjs"
+  }
+}
