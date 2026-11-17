@@ -8,18 +8,43 @@
 // POST /sessions            {cwd?, text}   -> create a session and send the first prompt
 // POST /sessions/:id/prompt {text, mode?}  -> send a prompt (mode: followup | steer)
 // POST /sessions/:id/cancel           -> cancel the running turn
-// GET  /events?since=ID               -> SSE stream: turn-end, status, error, user-message
+// GET  /events?since=ID               -> SSE stream: turn-end, status, error, user-message, pending-input
 
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 const { version } = createRequire(import.meta.url)('./package.json')
 /** Wire contract for HTTP and SSE. Bump only for a breaking change. */
 const PROTOCOL = 1
+
+/** Header carried by every bridged prompt, and shown by the DSH transcript and UI. */
+const PROVENANCE = /^\[dsh-agent-bridge\] from ([^\]\n]{1,64})\n\n/
+/** A line that only claims to be a sender, which a client must not be able to forge. */
+const HEADER_ONLY = /^[ \t]*\[[^\]\n]{1,80}\][ \t]*(?:\r?\n)+/
+
+/** Keep an agent label printable, bounded and header-safe. */
+function agentNameOf(value) {
+  const clean = (typeof value === 'string' ? value : '').replace(/[^\w.:@+-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
+  return clean || 'generic'
+}
+
+/** Drop leading sender-looking headers so a client cannot pose as another agent. */
+function stripProvenance(text) {
+  let out = text
+  for (;;) {
+    const next = out.replace(PROVENANCE, '').replace(HEADER_ONLY, '')
+    if (next === out) return out
+    out = next
+  }
+}
+
+function tagPrompt(text, agent) {
+  return `[dsh-agent-bridge] from ${agent}\n\n${stripProvenance(text)}`
+}
 
 export const name = 'agent-bridge'
 // cordis runs service methods under the caller's context, so this plugin
@@ -62,10 +87,19 @@ function compact(events, limit) {
   for (const e of events) {
     const d = e?.data ?? {}
     switch (e?.type) {
-      case 'user/message':
-        if (d.source?.kind && d.source.kind !== 'user') break
-        out.push({ seq: e.seq, role: d.source?.kind === 'user' ? 'user' : (d.source?.kind ?? 'user'), text: clip(textOf(d.content), 4000) })
+      case 'user/message': {
+        const text = textOf(d.content)
+        const provenance = PROVENANCE.exec(text)
+        if (provenance) {
+          // A bridged prompt: show who sent it instead of a plain user message.
+          out.push({ seq: e.seq, role: 'agent-bridge', agent: provenance[1], text: clip(stripProvenance(text), 4000) })
+        } else if (d.source?.kind && d.source.kind !== 'user') {
+          break
+        } else {
+          out.push({ seq: e.seq, role: 'user', text: clip(text, 4000) })
+        }
         break
+      }
       case 'assistant/message': {
         const t = textOf(d.message?.content)
         if (t) out.push({ seq: e.seq, role: 'assistant', turn: d.turn, text: clip(t, 6000) })
@@ -111,6 +145,27 @@ export function apply(ctx, config = {}) {
   // client must reset its cursor when this value changes.
   const bootId = randomUUID()
 
+  // Append-only audit trail for everything the bridge dispatches. It records a
+  // hash and a length, never the prompt text itself.
+  const auditFile = process.env.DSH_BRIDGE_AUDIT_FILE || join(homedir(), '.dsh', 'agent-bridge-audit.jsonl')
+  const auditMaxBytes = Number(config.auditMaxBytes ?? 1048576)
+  const audit = ({ action, agent, sessionId, text, ...rest }) => {
+    try {
+      mkdirSync(dirname(auditFile), { recursive: true })
+      try {
+        if (statSync(auditFile).size >= auditMaxBytes) renameSync(auditFile, `${auditFile}.1`)
+      } catch { /* first write, or a file another process is rotating */ }
+      const entry = { time: new Date().toISOString(), bootId, action, agent, sessionId, ...rest }
+      if (typeof text === 'string') {
+        entry.textLength = text.length
+        entry.textSha256 = createHash('sha256').update(text, 'utf8').digest('hex')
+      }
+      appendFileSync(auditFile, JSON.stringify(entry) + '\n', { mode: 0o600 })
+    } catch (error) {
+      ctx.logger?.warn?.(`agent-bridge: audit write failed: ${error}`)
+    }
+  }
+
   const emit = (ev) => {
     ev = { id: ++seq, bootId, time: Date.now(), ...ev }
     ring.push(ev)
@@ -127,8 +182,6 @@ export function apply(ctx, config = {}) {
         emit({ type: 'turn-end', sessionId: session.id, title: titleOf(session), cwd: session.header?.cwd, reason: event.data?.reason?.kind, lastText: clip(lastAssistantText(session.snapshotEvents?.() ?? []), 4000) })
       } else if (event.type === 'user/message' && event.data?.source?.kind === 'user') {
         emit({ type: 'user-message', sessionId: session.id, source: event.data?.source?.kind, text: clip(textOf(event.data?.content), 500) })
-      } else if (/^(approval|permission)\/(request|pending|ask)/.test(event.type)) {
-        emit({ type: 'needs-approval', sessionId: session.id, event: event.type })
       }
     } catch (error) {
       ctx.logger?.warn?.(`agent-bridge: event relay failed: ${error}`)
@@ -136,6 +189,36 @@ export function apply(ctx, config = {}) {
   })
   ctx.on('agent/status', ({ agent, status }) => emit({ type: 'status', sessionId: agent.id, status }))
   ctx.on('agent/error', ({ agent, error }) => emit({ type: 'error', sessionId: agent.id, message: String(error?.message ?? error) }))
+
+  // DSH exposes the unsettled approval/request and user-questions/request events
+  // per Agent. That table is the real source of "this session waits for a human",
+  // unlike the guessed session event names the first version listened for.
+  const pendingSeen = new Map()
+  const pendingKind = (info) => (info?.event === 'approval/request' ? 'approval' : info?.event === 'user-questions/request' ? 'question' : 'other')
+  const pendingSweep = () => {
+    let unsettled = []
+    try { unsettled = ctx.typertGateway?.getPendingRemoteEvents?.() ?? [] } catch { unsettled = [] }
+    const current = new Map()
+    for (const info of unsettled) {
+      if (!info?.agentId) continue
+      if (!current.has(info.agentId)) current.set(info.agentId, new Set())
+      current.get(info.agentId).add(pendingKind(info))
+    }
+    for (const [sessionId, kinds] of current) {
+      const key = [...kinds].sort().join(',')
+      if (pendingSeen.get(sessionId) === key) continue
+      pendingSeen.set(sessionId, key)
+      emit({ type: 'pending-input', sessionId, kinds: [...kinds].sort() })
+    }
+    for (const sessionId of [...pendingSeen.keys()]) {
+      if (current.has(sessionId)) continue
+      pendingSeen.delete(sessionId)
+      emit({ type: 'pending-input', sessionId, kinds: [] })
+    }
+  }
+  const pendingPollMs = Number(config.pendingPollMs ?? 1500)
+  const pendingTimer = pendingPollMs > 0 ? setInterval(pendingSweep, pendingPollMs) : undefined
+  pendingTimer?.unref?.()
 
   const send = (res, code, body) => {
     res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -160,16 +243,24 @@ export function apply(ctx, config = {}) {
     if (typeof text !== 'string' || !text.trim() || text.length > 50000) throw Object.assign(new Error('text must contain 1-50000 characters'), { status: 400 })
     if (mode !== undefined && mode !== 'followup' && mode !== 'steer') throw Object.assign(new Error('Invalid prompt mode'), { status: 400 })
   }
-  const prompt = async (sessionId, text, mode) => {
+  const prompt = async (sessionId, text, mode, agent) => {
     validatePrompt(text, mode)
     if (promptLocks.has(sessionId) || (ctx.agents.get(sessionId)?.status && ctx.agents.get(sessionId).status !== 'idle' && mode !== 'steer')) throw Object.assign(new Error('Session busy; use explicit steer mode'), { status: 409 })
     promptLocks.add(sessionId)
-    try { return await sc.prompt({
-    sessionId,
-    content: [{ type: 'text', text }],
-    requestId: randomUUID(),
-    mode: mode === 'steer' ? 'steer' : 'followup',
-  }, new AbortController().signal) } finally { promptLocks.delete(sessionId) }
+    // Capture the cursor before the turn starts: the wait must end on a turn-end
+    // that is strictly newer than this.
+    const eventId = seq
+    const requestId = randomUUID()
+    try {
+      const value = await sc.prompt({
+        sessionId,
+        content: [{ type: 'text', text: tagPrompt(text, agent) }],
+        requestId,
+        mode: mode === 'steer' ? 'steer' : 'followup',
+      }, new AbortController().signal)
+      audit({ action: 'prompt', agent, sessionId, requestId, mode: mode ?? 'followup', text, eventId })
+      return { ...(value ?? {}), sessionId, requestId, eventId, bootId }
+    } finally { promptLocks.delete(sessionId) }
   }
 
   // ---- request log for the Bridge tab ------------------------------------------------------------
@@ -219,7 +310,7 @@ export function apply(ctx, config = {}) {
     let url
     try { url = new URL(req.url, 'http://127.0.0.1') }
     catch { return send(res, 400, { error: 'Invalid URL' }) }
-    const entry = { time: Date.now(), method: req.method, path: url.pathname, agent: clip(req.headers['x-agent-name'] ?? 'generic', 80), status: 0, ms: 0 }
+    const entry = { time: Date.now(), method: req.method, path: url.pathname, agent: agentNameOf(req.headers['x-agent-name']), status: 0, ms: 0 }
     res.on('finish', () => {
       entry.status = res.statusCode
       entry.ms = Date.now() - entry.time
@@ -278,21 +369,30 @@ export function apply(ctx, config = {}) {
           const body = await readBody(req)
           if (body.text !== undefined) validatePrompt(body.text, body.mode)
           for (const field of ['cwd', 'workspace']) if (body[field] !== undefined && (typeof body[field] !== 'string' || !body[field].trim() || body[field].length > 4096)) return send(res, 400, { error: `Invalid ${field}` })
+          if (body.cwd !== undefined) {
+            // A workspace is a real folder, not an arbitrary string DSH must guess about.
+            if (!isAbsolute(body.cwd)) return send(res, 400, { error: 'cwd must be an absolute path' })
+            let directory = false
+            try { directory = statSync(body.cwd).isDirectory() } catch { directory = false }
+            if (!directory) return send(res, 400, { error: 'cwd must be an existing directory' })
+          }
           counters.creates++; entry.kind = 'create'; entry.text = clip(body.text, 200); entry.cwd = body.cwd
           const ws = await resolveWorkspace(body.workspace, body.cwd)
           const created = await sc.create(ws ? { workspaceId: ws.id } : body.cwd ? { cwd: body.cwd } : {})
           entry.workspace = ws?.title
           entry.sessionId = created.sessionId
-          if (body.text) await prompt(created.sessionId, body.text, body.mode)
-          return send(res, 200, created)
+          audit({ action: 'create', agent: entry.agent, sessionId: created.sessionId, cwd: body.cwd, workspace: ws?.title })
+          const prompted = body.text ? await prompt(created.sessionId, body.text, body.mode, entry.agent) : undefined
+          return send(res, 200, { ...created, ...(prompted ?? {}), bootId, eventId: prompted?.eventId ?? seq })
         }
         if (req.method === 'POST' && parts.length === 3 && parts[2] === 'prompt') {
           const body = await readBody(req)
           counters.prompts++; entry.kind = body.mode === 'steer' ? 'steer' : 'prompt'; entry.text = clip(body.text, 200)
           validatePrompt(body.text, body.mode)
-          return send(res, 200, await prompt(parts[1], body.text, body.mode))
+          return send(res, 200, await prompt(parts[1], body.text, body.mode, entry.agent))
         }
         if (req.method === 'POST' && parts.length === 3 && parts[2] === 'cancel') {
+          audit({ action: 'cancel', agent: entry.agent, sessionId: parts[1] })
           return send(res, 200, (await sc.cancel({ sessionId: parts[1] })) ?? { cancelled: true })
         }
       }
@@ -314,6 +414,7 @@ export function apply(ctx, config = {}) {
   })
 
   ctx.effect(() => () => {
+    if (pendingTimer) clearInterval(pendingTimer)
     for (const res of clients) res.end()
     clients.clear()
     server.close()

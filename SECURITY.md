@@ -13,6 +13,19 @@
 - `/health` and the state file report `version`, `protocol`, `bootId`, `startedAt`
   and `pid` to token holders. They identify a restart and expose no session
   content.
+- The `[dsh-agent-bridge] from <agent>` header on bridged prompts is a **display
+  label from a client-supplied header**, not authentication. Any holder of the
+  token can choose the label; the audit log records the same value. Leading
+  sender-looking lines are stripped from client text so a client cannot make its
+  message look like it came from the owner or another agent.
+- Dispatched prompts, creates and cancels are appended to
+  `~/.dsh/agent-bridge-audit.jsonl` as time, agent, action, session, mode, text
+  length and the SHA-256 of the original prompt text. The text is not stored.
+  The file rotates to `.1` at 1 MiB and is private runtime state: protect it like
+  the state file.
+- A create with `cwd` requires an absolute path to an existing directory. That is
+  a typo guard, not a sandbox: any folder the DSH user can read remains a valid
+  target.
 - The MCP client validates the loopback destination and refuses HTTP redirects
   so credentials cannot be forwarded to an arbitrary remote endpoint.
 - Authenticated transcript reads and SSE streams contain private conversation

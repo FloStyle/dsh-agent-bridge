@@ -4,6 +4,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { apply } from '../index.js'
 
 /** Reserve an ephemeral loopback port, then release it for the bridge. */
@@ -119,4 +121,60 @@ export function withTimeout(promise, ms, label = 'operation') {
     promise,
     new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms) }),
   ]).finally(() => clearTimeout(timer))
+}
+
+const root = fileURLToPath(new URL('..', import.meta.url))
+
+/**
+ * Spawn `mcp/mcp.mjs` and speak JSON-RPC over stdio, the way an MCP client does.
+ * The child inherits the caller's environment, so set DSH_BRIDGE_STATE_FILE in
+ * `env` to point it at a test bridge.
+ */
+export function startMcp({ env = {} } = {}) {
+  const child = spawn(process.execPath, [join(root, 'mcp', 'mcp.mjs')], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, ...env },
+  })
+  const pending = new Map()
+  let nextId = 1
+  let buffer = ''
+  let stderr = ''
+  child.stderr.on('data', (chunk) => { stderr += chunk })
+  child.stdout.on('data', (chunk) => {
+    buffer += chunk
+    let split
+    while ((split = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, split).trim()
+      buffer = buffer.slice(split + 1)
+      if (!line) continue
+      let message
+      try { message = JSON.parse(line) } catch { continue }
+      const settle = pending.get(message.id)
+      if (!settle) continue
+      pending.delete(message.id)
+      settle(message)
+    }
+  })
+  const request = (method, params) => new Promise((resolve, reject) => {
+    const id = nextId++
+    const timer = setTimeout(() => {
+      if (pending.delete(id)) reject(new Error(`mcp timeout on ${method}; stderr: ${stderr}`))
+    }, 15000)
+    pending.set(id, (message) => { clearTimeout(timer); resolve(message) })
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
+  })
+  /** Call a tool and return its JSON payload, or throw its error text. */
+  const callTool = async (name, args = {}) => {
+    const response = await request('tools/call', { name, arguments: args })
+    if (response.error) throw new Error(response.error.message)
+    const result = response.result
+    if (result?.isError) throw new Error(result.content?.[0]?.text ?? 'tool failed')
+    return JSON.parse(result.content[0].text)
+  }
+  const stop = () => new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve()
+    child.once('exit', () => resolve())
+    child.kill()
+  })
+  return { request, callTool, stop, child, stderr: () => stderr }
 }
