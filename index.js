@@ -407,7 +407,14 @@ export function apply(ctx, config = {}) {
     })
     if (url.pathname !== '/events') { counters.total++; lastSeen.request = entry.time; track(entry) }
     try {
-      if (!authorized(req.headers.authorization)) { counters.unauthorized++; return send(res, 401, { error: 'unauthorized' }) }
+      if (!authorized(req.headers.authorization)) {
+        counters.unauthorized++
+        // X4: an unauthenticated caller must not choose the name shown to the
+        // operator, and the request log must say what happened.
+        entry.kind = 'unauthorized'
+        entry.agent = null
+        return send(res, 401, { error: 'unauthorized' })
+      }
       // Browser pages use DSH's authenticated UI route, never this control API.
       if (req.headers.origin) return send(res, 403, { error: 'Browser origins are not allowed' })
       if (url.pathname === '/events') { lastSeen.sse = Date.now(); res.__since = Date.now() }
@@ -491,9 +498,15 @@ export function apply(ctx, config = {}) {
           return send(res, 200, await prompt(parts[1], body.text, body.mode, entry.agent))
         }
         if (req.method === 'POST' && parts.length === 3 && parts[2] === 'cancel') {
-          const value = (await sc.cancel({ sessionId: parts[1] })) ?? { cancelled: true }
-          audit({ action: 'cancel', outcome: 'accepted', status: 200, agent: entry.agent, sessionId: parts[1] })
-          return send(res, 200, value)
+          try {
+            const value = (await sc.cancel({ sessionId: parts[1] })) ?? { cancelled: true }
+            audit({ action: 'cancel', outcome: 'accepted', status: 200, agent: entry.agent, sessionId: parts[1] })
+            return send(res, 200, value)
+          } catch (error) {
+            // T6: SECURITY.md promises that failed actions are recorded too.
+            audit({ action: 'cancel', outcome: 'failed', status: error?.status ?? 500, agent: entry.agent, sessionId: parts[1], error: String(error?.message ?? error) })
+            throw error
+          }
         }
       }
       send(res, 404, { error: 'not found' })
