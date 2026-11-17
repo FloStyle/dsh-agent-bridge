@@ -46,7 +46,7 @@ let installedVersion
 if (existsSync(installedManifest)) {
   installedVersion = JSON.parse(readFileSync(installedManifest, 'utf8')).version
 } else {
-  bad(`plugin in profile '${profile}'`, 'not installed', `dsh plugin --profile ${profile} add github:FloStyle/dsh-agent-bridge#v0.6.1`)
+  bad(`plugin in profile '${profile}'`, 'not installed', `dsh plugin --profile ${profile} add github:FloStyle/dsh-agent-bridge#v0.6.2`)
 }
 
 const repoVersion = (() => {
@@ -145,7 +145,7 @@ if (!existsSync(stateFile)) {
 // ---- 4. MCP client entry -------------------------------------------------------------------------
 const mcpEntry = join(profileDir, 'node_modules', packageName, 'mcp', 'mcp.mjs')
 if (existsSync(mcpEntry)) ok('MCP client entry', mcpEntry)
-else bad('MCP client entry', `missing at ${mcpEntry}`, `dsh plugin --profile ${profile} add github:FloStyle/dsh-agent-bridge#v0.6.1`)
+else bad('MCP client entry', `missing at ${mcpEntry}`, `dsh plugin --profile ${profile} add github:FloStyle/dsh-agent-bridge#v0.6.2`)
 
 console.log('')
 if (failures) {
@@ -153,4 +153,5 @@ if (failures) {
   process.exit(1)
 }
 console.log(`all checks passed${warnings ? ` with ${warnings} warning(s)` : ''}`)
+
 
