@@ -75,8 +75,7 @@ test('a wait right after a send returns the new turn, not the previous one', asy
   assert.ok(waited.turnEndEventId > sent.eventId, 'the wait must report the turn-end it observed')
 })
 
-test('a wait without a cursor still reports idle and bounded output', async (t) => {
-  const { bridge } = await startFake()
+test('a wait without a cursor still reports idle and bounded output', async (t) => {  const { bridge } = await startFake()
   t.after(() => bridge.stop())
   const mcp = startMcp({ env: { DSH_BRIDGE_STATE_FILE: bridge.file } })
   t.after(() => mcp.stop())
@@ -103,4 +102,22 @@ test('a wait reports a timeout instead of hanging when no turn ends', async (t) 
   )
   assert.equal(waited.timedOut, true)
   assert.equal(waited.sessionId, SESSION)
+})
+
+test('a cancelled turn ends the wait with cancelled true (R1.1)', async (t) => {
+  const { bridge, dsh } = await startFake()
+  t.after(() => bridge.stop())
+  const mcp = startMcp({ env: { DSH_BRIDGE_STATE_FILE: bridge.file } })
+  t.after(() => mcp.stop())
+
+  const sent = await withTimeout(mcp.callTool('dsh_send', { sessionId: SESSION, text: 'then cancel me' }), 10000, 'dsh_send')
+  bridge.emit('session/event', dsh.session, { type: 'turn/end', seq: 9, data: { turn: 2, reason: { kind: 'aborted', reason: { kind: 'user' } } } })
+
+  const waited = await withTimeout(
+    mcp.callTool('dsh_wait', { sessionId: SESSION, since: sent.eventId, bootId: sent.bootId, timeoutSec: 10 }),
+    10000,
+    'dsh_wait',
+  )
+  assert.equal(waited.cancelled, true, 'a cancelled turn must be reported as cancelled')
+  assert.equal(waited.timedOut, undefined)
 })
