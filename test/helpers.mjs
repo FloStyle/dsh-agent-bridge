@@ -2,8 +2,8 @@
 import { once } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { apply } from '../index.js'
 
 /** Reserve an ephemeral loopback port, then release it for the bridge. */
@@ -24,8 +24,10 @@ export async function freePort() {
 export async function startBridge({ port, stateFile, controller = {}, context = {}, config = {}, keepStateEnv = false } = {}) {
   const folder = stateFile ? undefined : mkdtempSync(join(tmpdir(), 'dsh-bridge-test-'))
   const file = stateFile ?? join(folder, 'state.json')
-  const previous = process.env.DSH_BRIDGE_STATE_FILE
-  process.env.DSH_BRIDGE_STATE_FILE = file
+  // A test must never adopt the live bridge's endpoint and token.
+  if (resolve(file) === resolve(join(homedir(), '.dsh', 'agent-bridge.json'))) {
+    throw new Error('refusing to point a test bridge at the real ~/.dsh/agent-bridge.json')
+  }
   const listenPort = port ?? await freePort()
   const disposers = []
   const handlers = new Map()
@@ -52,7 +54,20 @@ export async function startBridge({ port, stateFile, controller = {}, context = 
     },
     ...context,
   }
-  const server = apply(ctx, { port: listenPort, ...config })
+  // The plugin reads this path while `apply` runs. Set it for that call only:
+  // an await between here and there used to let another bridge's teardown clear
+  // it, and the next bridge then wrote the live ~/.dsh state file.
+  const previous = process.env.DSH_BRIDGE_STATE_FILE
+  process.env.DSH_BRIDGE_STATE_FILE = file
+  let server
+  try {
+    server = apply(ctx, { port: listenPort, ...config })
+  } finally {
+    if (!keepStateEnv) {
+      if (previous === undefined) delete process.env.DSH_BRIDGE_STATE_FILE
+      else process.env.DSH_BRIDGE_STATE_FILE = previous
+    }
+  }
   await once(server, 'listening')
   const state = JSON.parse(readFileSync(file, 'utf8'))
   const headers = { authorization: `Bearer ${state.token}`, 'content-type': 'application/json' }
@@ -66,10 +81,6 @@ export async function startBridge({ port, stateFile, controller = {}, context = 
     const timer = setTimeout(() => server.closeAllConnections?.(), 500)
     await closed
     clearTimeout(timer)
-    if (!keepStateEnv) {
-      if (previous === undefined) delete process.env.DSH_BRIDGE_STATE_FILE
-      else process.env.DSH_BRIDGE_STATE_FILE = previous
-    }
     if (folder) rmSync(folder, { recursive: true, force: true })
   }
   return {
