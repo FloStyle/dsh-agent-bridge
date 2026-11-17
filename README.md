@@ -61,22 +61,88 @@ or share it. `DSH_BRIDGE_STATE_FILE` optionally selects another private state fi
 set the same path for DSH and the MCP client. `DSH_AGENT_NAME` is a display label,
 not an identity or permission boundary.
 
+### Claude Code
+
+Register the server once, from the clone:
+
+```sh
+claude mcp add dsh-agent-bridge --env DSH_AGENT_NAME=claude-code -- node /absolute/path/to/dsh-agent-bridge/mcp/mcp.mjs
+```
+
+`scripts/connect-claude-code.ps1` and `scripts/connect-claude-code.sh` print the
+same command with this clone's path; pass `-Execute` / `--execute` to run it.
+Restart the client so it picks up the new server.
+
+For turn-end notifications without polling, run the watcher through Claude Code's
+Monitor tool. It prints one line per notification on stdout:
+
+```sh
+node /absolute/path/to/dsh-agent-bridge/mcp/watch.mjs --session <full-session-id>
+```
+
+The MCP process must see the same `HOME` (or the same `DSH_BRIDGE_STATE_FILE`) as
+DSH, otherwise it cannot read the endpoint and token.
+
 | Tool | Purpose |
 | --- | --- |
 | `dsh_list` | List sessions |
 | `dsh_workspaces` | List workspaces |
 | `dsh_read` | Read a bounded transcript; accepts a unique session ID prefix |
 | `dsh_send` | Create a session or send work to an existing session |
-| `dsh_wait` | Wait for completion or pending user input |
+| `dsh_wait` | Wait for a turn to end or for pending user input |
 | `dsh_cancel` | Cancel a turn |
 
-For a new session, supply `cwd` or `workspace` to `dsh_send`. Existing busy
-sessions reject ordinary prompts; `mode: "steer"` must be explicit. Approval and
-question prompts remain under DSH's controls. The bridge never approves them.
+The read-only tools carry `readOnlyHint: true`; `dsh_cancel` carries
+`destructiveHint: true`. MCP clients use these hints for their own permission
+prompts. That hint is advisory: the bridge itself still approves nothing.
 
-`node mcp/watch.mjs` prints completion/error notifications. `--session <full-id>`
-filters one session; `--all` also prints status and user-message events. Its output
-may contain private session content: do not publish captured output.
+For a new session, supply an **absolute, existing** `cwd` or a `workspace`.
+Existing busy sessions reject ordinary prompts; `mode: "steer"` must be explicit.
+Approval and question prompts remain under DSH's controls. The bridge never
+approves them.
+
+### Delegating a turn
+
+`dsh_send` returns the cursor of the turn it started; hand both fields to
+`dsh_wait` to wait for exactly that turn:
+
+```jsonc
+// dsh_send -> { "sessionId": "...", "requestId": "...", "eventId": 42, "bootId": "...", "accepted": true }
+// then dsh_wait
+{ "sessionId": "...", "since": 42, "bootId": "...", "timeoutSec": 600 }
+```
+
+Without `since`, `dsh_wait` keeps the older behaviour: it returns as soon as the
+session looks idle, which right after a send can still be the previous turn. Use
+the cursor whenever the result matters.
+
+### Provenance
+
+Every prompt the bridge sends starts with `[dsh-agent-bridge] from <agent>`, where
+`<agent>` is the client's `DSH_AGENT_NAME` / `X-Agent-Name` label. The DSH
+transcript and UI therefore show an external agent's message as such, and
+`dsh_read` reports it with role `agent-bridge`.
+
+Two limits matter:
+
+- **The name is self-asserted.** `X-Agent-Name` is chosen by the client, so any
+  holder of the token can claim any name. It is a display label, not an
+  authorization boundary. Per-client identity is Phase 3 (scoped tokens, S2).
+- **The role comes from DSH, not from the text.** DSH records the `requestId` the
+  bridge minted as `source.rpcId` on the accepted message; the bridge shows role
+  `agent-bridge` only for ids it minted in this process. A human who types the
+  same header into the DSH window stays `user`. The id set is in memory, so after
+  a DSH restart older bridged messages read as `user` with the header still
+  visible in the text.
+
+Leading copies of the bridge's own header are stripped from client text, so a
+client cannot stack a forged one in front of its message. Other leading lines,
+including bracketed labels such as `[WIP]`, are left untouched.
+
+`node mcp/watch.mjs` prints completion, error and pending-input notifications.
+`--session <full-id>` filters one session; `--all` also prints status and
+user-message events. Its output may contain private session content: do not
+publish captured output.
 
 ## HTTP API
 
@@ -89,15 +155,28 @@ rejected; the UI uses DSH's own authenticated status route instead.
 | GET | `/health` | Build and process identity: version, protocol, bootId, startedAt, pid, clients, lastEventId |
 | GET | `/sessions` | Session summaries |
 | GET | `/sessions/:id?limit=40` | Transcript and execution/pending-input state |
-| POST | `/sessions` | Create, optionally prompt: `{cwd?, workspace?, text?, mode?}` |
-| POST | `/sessions/:id/prompt` | Prompt: `{text, mode?}` |
+| POST | `/sessions` | Create, optionally prompt: `{cwd?, workspace?, text?, mode?}`; returns `sessionId`, `requestId`, `eventId`, `bootId` |
+| POST | `/sessions/:id/prompt` | Prompt: `{text, mode?}`; returns `requestId`, `eventId`, `bootId` |
 | POST | `/sessions/:id/cancel` | Cancel |
 | GET | `/workspaces` | Workspaces |
-| GET | `/events?since=<id>` | SSE stream |
+| GET | `/events?since=<id>` | SSE stream: `turn-end`, `user-message`, `status`, `error`, `pending-input` |
 
 Transcript reads accept `limit` 0–1000; 0 requests the maximum bounded page.
 `hasMore` reports older history. The status tab shows metadata, without prompt or
 response excerpts. Authenticated transcript and SSE clients can read session content.
+
+`pending-input` reports `{sessionId, kinds}` when a session starts waiting for a
+human (`approval`, `question`), and again with `kinds: []` when it stops. It comes
+from DSH's own unsettled-request table, not from guessed event names. The bridge
+never answers those requests. `needs-approval` is emitted as a **deprecated alias**
+with the same payload for one release; it disappears in 0.7.0 with a protocol bump.
+
+Every prompt, create and cancel is appended to `~/.dsh/agent-bridge-audit.jsonl`
+(`DSH_BRIDGE_AUDIT_FILE` moves it): one JSON object per line with time, agent,
+action, `outcome` (`accepted` / `refused` / `failed`), `status` (the HTTP status),
+session, mode, text length and the SHA-256 of the original prompt text. Refusals
+(409 busy, 400 invalid) and DSH prompt errors are recorded too. The prompt text
+itself is never written. The file rotates to `.1` at 1 MiB.
 
 SSE event ids restart at 1 when DSH restarts. Every event carries the `bootId` of
 the process that emitted it: clients must drop a `since` cursor from a previous

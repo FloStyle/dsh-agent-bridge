@@ -19,7 +19,7 @@ for (;;) {
       if (ev.type === 'turn-end') console.log(`[dsh turn-end] ${ev.sessionId} "${oneLine(ev.title, 60)}" (${ev.reason}) :: ${oneLine(ev.lastText)}`)
       else if (ev.type === 'error') console.log(`[dsh error] ${ev.sessionId} :: ${oneLine(ev.message)}`)
       else if (ev.type === 'pending-input') console.log(`[dsh pending-input] ${ev.sessionId} (${(ev.kinds ?? []).join(', ')})`)
-      else if (ev.type === 'needs-approval') console.log(`[dsh needs-approval] ${ev.sessionId} (${ev.event})`)
+      else if (ev.type === 'needs-approval') continue // deprecated alias of pending-input
       else if (all) console.log(`[dsh ${ev.type}] ${ev.sessionId} ${oneLine(ev.status ?? ev.text, 120)}`)
     }
   } catch (e) {
