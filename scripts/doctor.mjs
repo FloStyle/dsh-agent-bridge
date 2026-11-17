@@ -8,6 +8,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { parseDeniedPlugins, deniedPluginHint } from './plugin-list.mjs'
 
 const args = process.argv.slice(2)
 const argValue = (name, fallback) => {
@@ -65,6 +66,16 @@ if (installedVersion && repoVersion) {
 } else if (installedVersion) {
   ok('plugin version', installedVersion)
 }
+
+// ---- 2b. plugins DSH refuses for this runtime ----------------------------------------------------
+// DSH keeps no refusal record; the warning from `dsh plugin <profile> list` is
+// the only observable source (see scripts/plugin-list.mjs).
+try {
+  const list = spawnSync(`dsh plugin --profile ${profile} list`, { encoding: 'utf8', shell: true, timeout: 60000 })
+  for (const plugin of parseDeniedPlugins(`${list.stdout ?? ''}${list.stderr ?? ''}`)) {
+    warn('plugin refused', `${plugin.name}@${plugin.version} is incompatible with dsh ${plugin.runtime}`, deniedPluginHint(profile, plugin))
+  }
+} catch { /* the list check is advisory: never fail doctor on it */ }
 
 // ---- 3. state file and /health -------------------------------------------------------------------
 if (!existsSync(stateFile)) {
