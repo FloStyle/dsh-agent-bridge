@@ -5,9 +5,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { withTimeout } from './helpers.mjs'
 
@@ -44,24 +44,40 @@ test('doctor warns once per denied plugin, with the allow-version hint', async (
   writeFileSync(stateFile, JSON.stringify({ url: `http://127.0.0.1:${server.address().port}`, token: 'x'.repeat(48) }))
 
   // A fake dsh on PATH: --version answers, `plugin ... list` prints the fixture.
-  const shim = join(bin, 'dsh.cmd')
   const fixturePath = join(bin, 'denied.txt')
   writeFileSync(fixturePath, fixture)
-  writeFileSync(shim, [
-    '@echo off',
-    'if "%1"=="--version" (',
-    '  echo 0.2.2-rc.3',
-    '  exit /b 0',
-    ')',
-    `type "${fixturePath}" 1>&2`,
-    'exit /b 0',
-    '',
-  ].join('\r\n'))
+  let shim
+  if (process.platform === 'win32') {
+    shim = join(bin, 'dsh.cmd')
+    writeFileSync(shim, [
+      '@echo off',
+      'if "%1"=="--version" (',
+      '  echo 0.2.2-rc.3',
+      '  exit /b 0',
+      ')',
+      `type "${fixturePath}" 1>&2`,
+      'exit /b 0',
+      '',
+    ].join('\r\n'))
+  } else {
+    shim = join(bin, 'dsh')
+    writeFileSync(shim, [
+      '#!/bin/sh',
+      'if [ "$1" = "--version" ]; then',
+      '  echo 0.2.2-rc.3',
+      '  exit 0',
+      'fi',
+      `cat "${fixturePath}" >&2`,
+      'exit 0',
+      '',
+    ].join('\n'))
+    chmodSync(shim, 0o755)
+  }
 
   t.after(() => { rmSync(home, { recursive: true, force: true }); rmSync(stateDir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }) })
 
   const child = spawn(process.execPath, [join(root, 'scripts', 'doctor.mjs'), '--profile', 'desktop', '--repo', root], {
-    env: { ...process.env, PATH: `${bin};${process.env.PATH}`, USERPROFILE: home, HOME: home, DSH_BRIDGE_STATE_FILE: stateFile },
+    env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, USERPROFILE: home, HOME: home, DSH_BRIDGE_STATE_FILE: stateFile },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let output = ''
@@ -71,3 +87,4 @@ test('doctor warns once per denied plugin, with the allow-version hint', async (
   assert.match(output, /WARN.*dsh-codex-subscription@3\.2\.6/, `doctor must name the denied plugin; output was:\n${output}`)
   assert.match(output, /dsh plugin --profile desktop allow-version dsh-codex-subscription@3\.2\.6 --dsh-version 0\.2\.2-rc\.3 --accept-risk/, 'the fix line must use the real syntax')
 })
+
