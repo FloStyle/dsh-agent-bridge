@@ -1,19 +1,34 @@
 #!/usr/bin/env sh
-# Print or run the `claude mcp add` command for this clone.
-# Usage: ./scripts/connect-claude-code.sh [agent-name] [--execute]
+# Print or run the `claude mcp add` command for this installation.
+# Prefers the plugin installed in a DSH profile; falls back to this clone.
+# The config contains no token: the MCP client reads the URL and token from
+# ~/.dsh/agent-bridge.json at run time.
+#
+# Usage: ./scripts/connect-claude-code.sh [agent-name] [--profile desktop] [--execute]
 set -eu
 
-agent="${1:-claude-code}"
+agent=claude-code
+profile=desktop
 execute=false
-for arg in "$@"; do
-  [ "$arg" = "--execute" ] && execute=true
-done
-[ "$agent" = "--execute" ] && agent=claude-code
-
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-entry="$repo/mcp/mcp.mjs"
-if [ ! -f "$entry" ]; then
-  echo "no mcp/mcp.mjs in $repo; run this from the dsh-agent-bridge clone" >&2
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --execute) execute=true; shift ;;
+    --profile|-p) profile=${2:?--profile needs a value}; shift 2 ;;
+    --repo) repo=${2:?--repo needs a value}; shift 2 ;;
+    -h|--help) echo 'usage: connect-claude-code.sh [agent-name] [--profile desktop] [--execute]'; exit 0 ;;
+    *) agent="$1"; shift ;;
+  esac
+done
+
+installed="$HOME/.dsh/profiles/$profile/node_modules/dsh-agent-bridge/mcp/mcp.mjs"
+if [ -f "$installed" ]; then
+  entry="$installed"
+elif [ -f "$repo/mcp/mcp.mjs" ]; then
+  entry="$repo/mcp/mcp.mjs"
+else
+  echo "no mcp/mcp.mjs in profile '$profile' or in $repo; install the plugin first" >&2
   exit 1
 fi
 

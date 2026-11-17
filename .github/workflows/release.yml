@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Test
+        run: node --test
+
+  release:
+    name: pack and publish
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check that the tag matches package.json
+        run: |
+          node -e '
+          const version = require("./package.json").version
+          const tag = process.env.GITHUB_REF_NAME
+          if (tag !== `v${version}`) {
+            console.error(`tag ${tag} does not match package version ${version}`)
+            process.exit(1)
+          }
+          '
+      - name: Pack
+        run: |
+          mkdir -p dist
+          npm pack --pack-destination dist
+          cd dist
+          for archive in *.tgz; do sha256sum "$archive" > "$archive.sha256"; done
+          ls -l
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          gh release create "$tag" dist/*.tgz dist/*.sha256 \
+            --title "dsh-agent-bridge $version" \
+            --notes "Install: \`dsh plugin add github:FloStyle/dsh-agent-bridge#$tag\` or the tarball below. Verify it with the attached SHA-256. Rollout and rollback steps: docs/rollout-plan.md." \
+            --verify-tag

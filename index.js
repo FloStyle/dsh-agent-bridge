@@ -152,6 +152,15 @@ export function apply(ctx, config = {}) {
   // client must reset its cursor when this value changes.
   const bootId = randomUUID()
 
+  // A missing injected service means this DSH surface differs from the one the
+  // bridge was built for. Name it once instead of failing silently.
+  const missingServices = inject.filter((service) => {
+    try { return ctx[service] === undefined || ctx[service] === null } catch { return true }
+  })
+  if (missingServices.length) {
+    ctx.logger?.warn?.(`agent-bridge: missing injected DSH service(s): ${missingServices.join(', ')}. Features that need them are disabled; this plugin targets DSH >=0.2.2-rc.1 <0.3.0.`)
+  }
+
   // Append-only audit trail for everything the bridge dispatches, accepted or
   // not. It records a hash and a length, never the prompt text itself.
   const auditFile = process.env.DSH_BRIDGE_AUDIT_FILE || join(homedir(), '.dsh', 'agent-bridge-audit.jsonl')
@@ -374,7 +383,10 @@ export function apply(ctx, config = {}) {
       const signal = new AbortController().signal
 
       if (req.method === 'GET' && url.pathname === '/health') {
-        return send(res, 200, { ok: true, version, protocol: PROTOCOL, bootId, startedAt, pid: process.pid, clients: clients.size, lastEventId: seq })
+        return send(res, 200, {
+          ok: true, version, protocol: PROTOCOL, bootId, startedAt, pid: process.pid, clients: clients.size, lastEventId: seq,
+          services: { checked: inject.length, missing: missingServices },
+        })
       }
 
       if (req.method === 'GET' && url.pathname === '/events') {
