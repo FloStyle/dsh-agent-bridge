@@ -10,11 +10,16 @@
 // POST /sessions/:id/cancel           -> cancel the running turn
 // GET  /events?since=ID               -> SSE stream: turn-end, status, error, user-message
 
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+
+const { version } = createRequire(import.meta.url)('./package.json')
+/** Wire contract for HTTP and SSE. Bump only for a breaking change. */
+const PROTOCOL = 1
 
 export const name = 'agent-bridge'
 // cordis runs service methods under the caller's context, so this plugin
@@ -89,14 +94,25 @@ export function apply(ctx, config = {}) {
   const stateFile = process.env.DSH_BRIDGE_STATE_FILE || join(homedir(), '.dsh', 'agent-bridge.json')
   const savedToken = config.token ?? loadToken(stateFile)
   const token = typeof savedToken === 'string' && savedToken.length >= 32 ? savedToken : randomBytes(24).toString('hex')
+  const tokenBytes = Buffer.from(token, 'utf8')
+  /** Compare without leaking the matched prefix length. */
+  const authorized = (header) => {
+    const prefix = 'Bearer '
+    if (typeof header !== 'string' || !header.startsWith(prefix)) return false
+    const given = Buffer.from(header.slice(prefix.length), 'utf8')
+    return given.length === tokenBytes.length && timingSafeEqual(given, tokenBytes)
+  }
 
   const sc = ctx.sessionController
   const clients = new Set()
   const ring = []
   let seq = 0
+  // Identifies this plugin load. SSE ids restart at 1 when DSH restarts, so a
+  // client must reset its cursor when this value changes.
+  const bootId = randomUUID()
 
   const emit = (ev) => {
-    ev = { id: ++seq, time: Date.now(), ...ev }
+    ev = { id: ++seq, bootId, time: Date.now(), ...ev }
     ring.push(ev)
     if (ring.length > 500) ring.shift()
     const frame = `id: ${ev.id}\ndata: ${JSON.stringify(ev)}\n\n`
@@ -184,7 +200,7 @@ export function apply(ctx, config = {}) {
   }
 
   const statusPayload = () => ({
-    ok: true, port, startedAt, now: Date.now(), counters, lastSeen,
+    ok: true, version, protocol: PROTOCOL, bootId, pid: process.pid, port, startedAt, now: Date.now(), counters, lastSeen,
     sse: sseClients(), lastEventId: seq,
     // Status UI gets metadata only, not prompt/response snippets or local paths.
     requests: requests.slice(-50).reverse().map(({ time, method, status, ms, kind, sessionId, agent }) => ({ time, method, status, ms, kind, sessionId, agent })),
@@ -211,7 +227,7 @@ export function apply(ctx, config = {}) {
     })
     if (url.pathname !== '/events') { counters.total++; lastSeen.request = entry.time; track(entry) }
     try {
-      if (req.headers.authorization !== `Bearer ${token}`) { counters.unauthorized++; return send(res, 401, { error: 'unauthorized' }) }
+      if (!authorized(req.headers.authorization)) { counters.unauthorized++; return send(res, 401, { error: 'unauthorized' }) }
       // Browser pages use DSH's authenticated UI route, never this control API.
       if (req.headers.origin) return send(res, 403, { error: 'Browser origins are not allowed' })
       if (url.pathname === '/events') { lastSeen.sse = Date.now(); res.__since = Date.now() }
@@ -223,7 +239,9 @@ export function apply(ctx, config = {}) {
       const parts = url.pathname.split('/').filter(Boolean)
       const signal = new AbortController().signal
 
-      if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, clients: clients.size, lastEventId: seq })
+      if (req.method === 'GET' && url.pathname === '/health') {
+        return send(res, 200, { ok: true, version, protocol: PROTOCOL, bootId, startedAt, pid: process.pid, clients: clients.size, lastEventId: seq })
+      }
 
       if (req.method === 'GET' && url.pathname === '/events') {
         if (clients.size >= 16) return send(res, 429, { error: 'Too many event streams' })
@@ -290,7 +308,7 @@ export function apply(ctx, config = {}) {
   server.headersTimeout = 10000
   server.listen(port, '127.0.0.1', () => {
     mkdirSync(dirname(stateFile), { recursive: true })
-    writeFileSync(stateFile, JSON.stringify({ url: `http://127.0.0.1:${port}`, token, protocol: 1 }, null, 2), { mode: 0o600 })
+    writeFileSync(stateFile, JSON.stringify({ url: `http://127.0.0.1:${port}`, token, protocol: PROTOCOL, version, bootId, startedAt, pid: process.pid }, null, 2), { mode: 0o600 })
     if (process.platform !== 'win32') chmodSync(stateFile, 0o600)
     ctx.logger?.info?.(`agent-bridge: listening on 127.0.0.1:${port}`)
   })

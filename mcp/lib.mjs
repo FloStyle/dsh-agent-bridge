@@ -51,3 +51,35 @@ export async function* events({ since, signal } = {}) {
     }
   }
 }
+
+/**
+ * Follow the bridge across reconnects, resetting the cursor when the serving
+ * process changes: SSE ids restart at 1 on every DSH restart, so a cursor from
+ * the previous boot would silently skip every new event.
+ */
+export async function* follow({ since, signal, retryMs = 1000 } = {}) {
+  let cursor = since
+  let bootId
+  for (;;) {
+    const state = bridge()
+    if (bootId !== undefined && state.bootId !== bootId) cursor = 0
+    if (state.bootId) bootId = state.bootId
+    try {
+      for await (const event of events({ since: cursor, signal })) {
+        if (event.bootId && bootId && event.bootId !== bootId) {
+          // A different process answered: ids restarted, so replay from the top.
+          cursor = 0
+          bootId = event.bootId
+          break
+        }
+        if (event.bootId) bootId = event.bootId
+        cursor = event.id
+        yield event
+      }
+    } catch (error) {
+      if (signal?.aborted) return
+    }
+    if (signal?.aborted) return
+    await new Promise((resolve) => setTimeout(resolve, retryMs))
+  }
+}
