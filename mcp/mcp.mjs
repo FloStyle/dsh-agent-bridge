@@ -69,7 +69,7 @@ const tools = [
   },
   {
     name: 'dsh_wait',
-    description: 'Wait for a DSH turn to end, then return its transcript. Pass the eventId from dsh_send as `since` (and its bootId) to wait for exactly that turn; without a cursor it waits until the session looks idle. Times out after timeoutSec (default 300).',
+    description: 'Wait for a DSH turn to end, then return its transcript. Stops early when the session starts waiting for a human (pending input) or when the turn was cancelled; it never answers the request. Pass the eventId from dsh_send as `since` (and its bootId) to wait for exactly that turn; without a cursor it waits until the session looks idle. Times out after timeoutSec (default 300).',
     annotations: readOnly('Wait for a DSH turn'),
     inputSchema: {
       type: 'object',
@@ -104,6 +104,12 @@ const tools = [
         for await (const event of follow({ since, signal: controller.signal, retryMs: 250 })) {
           if (bootId && event.bootId && event.bootId !== bootId) return { sessionId, timedOut: true, bootChanged: event.bootId }
           if (event.sessionId !== sessionId) continue
+          if (event.type === 'pending-input' && Array.isArray(event.kinds) && event.kinds.length) {
+            // The turn is waiting for a human: return instead of blocking until
+            // the timeout. Never answers the request.
+            const state = await read()
+            return { ...state, pendingInput: event.kinds, pendingInputEventId: event.id }
+          }
           if (event.type === 'turn-end' || event.type === 'error') {
             const state = await read()
             return {
@@ -162,3 +168,4 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
     out({ jsonrpc: '2.0', id, error: { code: -32603, message: String(e.message ?? e) } })
   }
 })
+
