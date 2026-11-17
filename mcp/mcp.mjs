@@ -106,7 +106,13 @@ const tools = [
           if (event.sessionId !== sessionId) continue
           if (event.type === 'turn-end' || event.type === 'error') {
             const state = await read()
-            return { ...state, turnEndEventId: event.id, ...(event.type === 'error' ? { error: event.message } : {}) }
+            return {
+              ...state,
+              turnEndEventId: event.id,
+              ...(event.type === 'turn-end' ? { reason: event.reason } : {}),
+              ...(event.type === 'turn-end' && event.reason === 'cancelled' ? { cancelled: true } : {}),
+              ...(event.type === 'error' ? { error: event.message } : {}),
+            }
           }
         }
       } finally {

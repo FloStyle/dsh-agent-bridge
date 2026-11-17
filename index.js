@@ -72,15 +72,26 @@ function clip(s, n) {
   return s.length > n ? s.slice(0, n) + `\u2026 [+${s.length - n} chars]` : s
 }
 
-function lastAssistantText(events) {
+/**
+ * Assistant text of one turn only. A cancelled turn has none, so it must not
+ * inherit the previous turn's answer (L1).
+ */
+function lastAssistantText(events, turn) {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]
-    if (e?.type === 'assistant/message') {
-      const t = textOf(e.data?.message?.content)
-      if (t) return t
-    }
+    if (e?.type !== 'assistant/message') continue
+    if (turn !== undefined && e.data?.turn !== turn) continue
+    const t = textOf(e.data?.message?.content)
+    if (t) return t
   }
-  return ''
+  return null
+}
+
+/** DSH TurnEndReason kinds to the three values clients act on. */
+function turnEndReason(kind) {
+  if (kind === 'aborted' || kind === 'interrupted') return 'cancelled'
+  if (kind === 'error') return 'error'
+  return 'completed'
 }
 
 /**
@@ -204,7 +215,14 @@ export function apply(ctx, config = {}) {
   ctx.on('session/event', (session, event) => {
     try {
       if (event.type === 'turn/end') {
-        emit({ type: 'turn-end', sessionId: session.id, title: titleOf(session), cwd: session.header?.cwd, reason: event.data?.reason?.kind, lastText: clip(lastAssistantText(session.snapshotEvents?.() ?? []), 4000) })
+        const turn = event.data?.turn
+        const reasonKind = event.data?.reason?.kind
+        const text = lastAssistantText(session.snapshotEvents?.() ?? [], turn)
+        emit({
+          type: 'turn-end', sessionId: session.id, title: titleOf(session), cwd: session.header?.cwd,
+          turn, reason: turnEndReason(reasonKind), reasonKind,
+          lastText: text === null ? null : clip(text, 4000),
+        })
       } else if (event.type === 'user/message' && event.data?.source?.kind === 'user') {
         emit({ type: 'user-message', sessionId: session.id, source: event.data?.source?.kind, text: clip(textOf(event.data?.content), 500) })
       }
