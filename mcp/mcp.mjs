@@ -11,6 +11,11 @@ const MAX_PROMPT = 50000
 const MAX_TIMEOUT_SEC = 3600
 const MAX_LIMIT = 1000
 
+// L2: without this name every agent looks the same in the transcript and audit.
+if (!process.env.DSH_AGENT_NAME) {
+  process.stderr.write('dsh-agent-bridge: DSH_AGENT_NAME is not set; this client will appear as "mcp-agent". Set DSH_AGENT_NAME so transcripts and the audit log name the sender.\n')
+}
+
 /** Accept a full id ("session-3a9e…"), the bare uuid, or any unique prefix ("3a9e7ffb"). */
 async function resolveId(id) {
   if (!id) return id

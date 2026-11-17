@@ -337,6 +337,7 @@ export function apply(ctx, config = {}) {
   const startedAt = Date.now()
   const requests = []
   const counters = { total: 0, errors: 0, prompts: 0, creates: 0, reads: 0, unauthorized: 0 }
+  let defaultAgentSeen = false
   const lastSeen = { request: 0, sse: 0 }
   const track = (entry) => {
     requests.push(entry)
@@ -381,6 +382,9 @@ export function apply(ctx, config = {}) {
     try { url = new URL(req.url, 'http://127.0.0.1') }
     catch { return send(res, 400, { error: 'Invalid URL' }) }
     const entry = { time: Date.now(), method: req.method, path: url.pathname, agent: agentNameOf(req.headers['x-agent-name']), status: 0, ms: 0 }
+    // L2: the MCP client sends this name when DSH_AGENT_NAME is unset, and the
+    // operator needs to see that some client is unnamed.
+    if (entry.agent === 'mcp-agent') defaultAgentSeen = true
     res.on('finish', () => {
       entry.status = res.statusCode
       entry.ms = Date.now() - entry.time
@@ -404,6 +408,7 @@ export function apply(ctx, config = {}) {
         return send(res, 200, {
           ok: true, version, protocol: PROTOCOL, bootId, startedAt, pid: process.pid, clients: clients.size, lastEventId: seq,
           services: { checked: inject.length, missing: missingServices },
+          defaultAgentSeen,
         })
       }
 

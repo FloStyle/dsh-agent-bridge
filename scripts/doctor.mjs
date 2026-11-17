@@ -115,6 +115,11 @@ if (!existsSync(stateFile)) {
         } else {
           ok('injected services', `${health.services.checked} checked, none missing`)
         }
+        if (health.defaultAgentSeen === true) {
+          warn('sender name', 'a client used the default name "mcp-agent"', 'set DSH_AGENT_NAME in that MCP client config, for example DSH_AGENT_NAME=claude-code')
+        } else if (health.defaultAgentSeen === false) {
+          ok('sender name', 'no unnamed client seen')
+        }
       }
     }
   }
