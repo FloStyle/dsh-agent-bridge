@@ -62,6 +62,18 @@ function loadToken(file) {
   try { return JSON.parse(readFileSync(file, 'utf8')).token } catch { return undefined }
 }
 
+/** The token lives in a private sibling file, never in the state file (X2). */
+function tokenPathOf(stateFile) {
+  return join(dirname(stateFile), 'agent-bridge.token')
+}
+
+function loadTokenFile(file) {
+  try {
+    const token = readFileSync(file, 'utf8').trim()
+    return token.length >= 32 ? token : undefined
+  } catch { return undefined }
+}
+
 function textOf(content, kinds = ['text']) {
   if (!Array.isArray(content)) return typeof content === 'string' ? content : ''
   return content.filter((p) => kinds.includes(p?.type)).map((p) => p.text ?? '').join('\n').trim()
@@ -144,7 +156,10 @@ export function apply(ctx, config = {}) {
   const port = Number(config.port ?? 7788)
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid bridge port')
   const stateFile = process.env.DSH_BRIDGE_STATE_FILE || join(homedir(), '.dsh', 'agent-bridge.json')
-  const savedToken = config.token ?? loadToken(stateFile)
+  const tokenFile = tokenPathOf(stateFile)
+  // Order: configured token, the 0.6.2 token file, then a 0.6.1 state file that
+  // still carries the token (adopted, not rotated, so existing clients survive).
+  const savedToken = config.token ?? loadTokenFile(tokenFile) ?? loadToken(stateFile)
   const token = typeof savedToken === 'string' && savedToken.length >= 32 ? savedToken : randomBytes(24).toString('hex')
   const tokenBytes = Buffer.from(token, 'utf8')
   /** Compare without leaking the matched prefix length. */
@@ -488,12 +503,30 @@ export function apply(ctx, config = {}) {
     }
   })
 
-  server.on('error', (error) => ctx.logger?.error?.(`agent-bridge: server error: ${error}`))
+  // X2: a failed listen used to leave the previous state file in place, so the
+  // MCP client sent its bearer token to whatever owned the port. Write a stale
+  // marker without the token instead; the token keeps its own private file.
+  server.on('error', (error) => {
+    ctx.logger?.error?.(`agent-bridge: cannot listen on 127.0.0.1:${port}: ${error?.code ?? error?.message ?? error}`)
+    try {
+      mkdirSync(dirname(stateFile), { recursive: true })
+      writeFileSync(stateFile, JSON.stringify({
+        stale: true,
+        error: `cannot listen on 127.0.0.1:${port}: ${error?.code ?? error?.message ?? 'listen failed'}`,
+        protocol: PROTOCOL, version, bootId,
+      }, null, 2), { mode: 0o600 })
+      if (process.platform !== 'win32') chmodSync(stateFile, 0o600)
+    } catch (writeError) {
+      ctx.logger?.warn?.(`agent-bridge: could not write the stale state file: ${writeError}`)
+    }
+  })
   server.requestTimeout = 15000
   server.headersTimeout = 10000
   server.listen(port, '127.0.0.1', () => {
     mkdirSync(dirname(stateFile), { recursive: true })
-    writeFileSync(stateFile, JSON.stringify({ url: `http://127.0.0.1:${port}`, token, protocol: PROTOCOL, version, bootId, startedAt, pid: process.pid }, null, 2), { mode: 0o600 })
+    writeFileSync(tokenFile, `${token}\n`, { mode: 0o600 })
+    if (process.platform !== 'win32') chmodSync(tokenFile, 0o600)
+    writeFileSync(stateFile, JSON.stringify({ url: `http://127.0.0.1:${port}`, protocol: PROTOCOL, version, bootId, startedAt, pid: process.pid }, null, 2), { mode: 0o600 })
     if (process.platform !== 'win32') chmodSync(stateFile, 0o600)
     ctx.logger?.info?.(`agent-bridge: listening on 127.0.0.1:${port}`)
   })

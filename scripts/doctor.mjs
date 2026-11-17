@@ -6,7 +6,7 @@
 // It never prints the token and never changes anything.
 import { readFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { parseDeniedPlugins, deniedPluginHint } from './plugin-list.mjs'
 
@@ -83,7 +83,13 @@ if (!existsSync(stateFile)) {
 } else {
   let state
   try { state = JSON.parse(readFileSync(stateFile, 'utf8')) } catch { state = undefined }
-  if (!state?.url || !state?.token) {
+  const inlineToken = typeof state?.token === 'string' && state.token.length >= 32 ? state.token : undefined
+  let fileToken
+  try { fileToken = readFileSync(join(dirname(stateFile), 'agent-bridge.token'), 'utf8').trim() } catch { fileToken = undefined }
+  const token = inlineToken ?? (fileToken?.length >= 32 ? fileToken : undefined)
+  if (state?.stale) {
+    bad('state file', `stale: ${state.error ?? 'the bridge is not listening'}`, `another process owns the port; stop it, or change \`port\` in cordis.patch.yml and restart DSH`)
+  } else if (!state?.url || !token) {
     bad('state file', `${stateFile} is not valid bridge state`, 'stop DSH, remove the file and restart to regenerate it')
   } else {
     const url = new URL(state.url)
@@ -94,7 +100,7 @@ if (!existsSync(stateFile)) {
       let health
       try {
         const response = await fetch(`${url.origin}/health`, {
-          headers: { authorization: `Bearer ${state.token}` },
+          headers: { authorization: `Bearer ${token}` },
           redirect: 'error',
           signal: AbortSignal.timeout(10000),
         })
