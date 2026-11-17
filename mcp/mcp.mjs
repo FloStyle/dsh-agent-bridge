@@ -50,7 +50,7 @@ const tools = [
   },
   {
     name: 'dsh_send',
-    description: 'Dispatch work to DSH. With sessionId: send a prompt to that session. Without: create a new session in a workspace (by workspace name/id, or by cwd: the workspace owning that folder, created if missing) and send the prompt. Returns at once with the requestId and eventId: pass both to dsh_wait to wait for exactly this turn.',
+    description: 'Dispatch work to DSH. With sessionId: send a prompt to that session. Without: create a new session in a workspace (by workspace name/id, or by cwd: the workspace owning that folder, created if missing) and send the prompt. Returns at once with requestId and eventId: always pass eventId as `since` (and bootId) to dsh_wait, so the wait is tied to this turn instead of guessing from idle state.',
     annotations: write('Send work to DSH'),
     inputSchema: {
       type: 'object',
@@ -87,14 +87,16 @@ const tools = [
       const seconds = Math.min(MAX_TIMEOUT_SEC, Math.max(1, Number(timeoutSec) || 300))
       const read = () => call('GET', `/sessions/${encodeURIComponent(sessionId)}?limit=${limit}`)
       if (typeof since !== 'number') {
-        // No cursor: the pre-0.6 behaviour, kept for callers that only poll.
+        // No cursor: the pre-0.6 behaviour, kept for callers that only poll. It
+        // can return the previous turn, so say so in the result.
+        const warning = 'No since cursor: this returned the session as soon as it looked idle, which can be the previous turn. Pass eventId from dsh_send as `since`.'
         const deadline = Date.now() + seconds * 1000
         do {
           const state = await read()
-          if (!state.running || state.pendingInput?.length) return state
+          if (!state.running || state.pendingInput?.length) return { ...state, cursorless: true, warning }
           await new Promise((resolve) => setTimeout(resolve, 750))
         } while (Date.now() < deadline)
-        return { sessionId, timedOut: true }
+        return { sessionId, timedOut: true, cursorless: true, warning }
       }
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), seconds * 1000)

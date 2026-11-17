@@ -84,6 +84,9 @@ test('a wait without a cursor still reports idle and bounded output', async (t) 
   const waited = await withTimeout(mcp.callTool('dsh_wait', { sessionId: SESSION, timeoutSec: 5 }), 10000, 'dsh_wait')
   assert.equal(waited.sessionId, SESSION)
   assert.ok(Array.isArray(waited.entries))
+  assert.equal(waited.cursorless, true, 'a cursorless wait must say it may be the previous turn')
+  assert.match(waited.warning, /previous turn/)
+  assert.match(waited.warning, /eventId/)
 })
 
 test('a wait reports a timeout instead of hanging when no turn ends', async (t) => {

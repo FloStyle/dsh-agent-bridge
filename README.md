@@ -121,9 +121,23 @@ the cursor whenever the result matters.
 Every prompt the bridge sends starts with `[dsh-agent-bridge] from <agent>`, where
 `<agent>` is the client's `DSH_AGENT_NAME` / `X-Agent-Name` label. The DSH
 transcript and UI therefore show an external agent's message as such, and
-`dsh_read` reports it with role `agent-bridge`. Leading lines that only claim a
-sender are stripped from the client's text, so a client cannot pose as the owner or
-as another agent.
+`dsh_read` reports it with role `agent-bridge`.
+
+Two limits matter:
+
+- **The name is self-asserted.** `X-Agent-Name` is chosen by the client, so any
+  holder of the token can claim any name. It is a display label, not an
+  authorization boundary. Per-client identity is Phase 3 (scoped tokens, S2).
+- **The role comes from DSH, not from the text.** DSH records the `requestId` the
+  bridge minted as `source.rpcId` on the accepted message; the bridge shows role
+  `agent-bridge` only for ids it minted in this process. A human who types the
+  same header into the DSH window stays `user`. The id set is in memory, so after
+  a DSH restart older bridged messages read as `user` with the header still
+  visible in the text.
+
+Leading copies of the bridge's own header are stripped from client text, so a
+client cannot stack a forged one in front of its message. Other leading lines,
+including bracketed labels such as `[WIP]`, are left untouched.
 
 `node mcp/watch.mjs` prints completion, error and pending-input notifications.
 `--session <full-id>` filters one session; `--all` also prints status and
@@ -154,12 +168,15 @@ response excerpts. Authenticated transcript and SSE clients can read session con
 `pending-input` reports `{sessionId, kinds}` when a session starts waiting for a
 human (`approval`, `question`), and again with `kinds: []` when it stops. It comes
 from DSH's own unsettled-request table, not from guessed event names. The bridge
-never answers those requests.
+never answers those requests. `needs-approval` is emitted as a **deprecated alias**
+with the same payload for one release; it disappears in 0.7.0 with a protocol bump.
 
 Every prompt, create and cancel is appended to `~/.dsh/agent-bridge-audit.jsonl`
 (`DSH_BRIDGE_AUDIT_FILE` moves it): one JSON object per line with time, agent,
-action, session, mode, text length and the SHA-256 of the original prompt text.
-The prompt text itself is never written. The file rotates to `.1` at 1 MiB.
+action, `outcome` (`accepted` / `refused` / `failed`), `status` (the HTTP status),
+session, mode, text length and the SHA-256 of the original prompt text. Refusals
+(409 busy, 400 invalid) and DSH prompt errors are recorded too. The prompt text
+itself is never written. The file rotates to `.1` at 1 MiB.
 
 SSE event ids restart at 1 when DSH restarts. Every event carries the `bootId` of
 the process that emitted it: clients must drop a `since` cursor from a previous

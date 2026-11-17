@@ -21,10 +21,8 @@ const { version } = createRequire(import.meta.url)('./package.json')
 /** Wire contract for HTTP and SSE. Bump only for a breaking change. */
 const PROTOCOL = 1
 
-/** Header carried by every bridged prompt, and shown by the DSH transcript and UI. */
-const PROVENANCE = /^\[dsh-agent-bridge\] from ([^\]\n]{1,64})\n\n/
-/** A line that only claims to be a sender, which a client must not be able to forge. */
-const HEADER_ONLY = /^[ \t]*\[[^\]\n]{1,80}\][ \t]*(?:\r?\n)+/
+/** The bridge's own sender line. Only this exact form is stripped from client text. */
+const BRIDGE_HEADER = /^[ \t]*\[[ \t]*dsh-agent-bridge[ \t]*\][ \t]*from[ \t]+[^\]\n]{0,64}[ \t]*(?:\r?\n)+/i
 
 /** Keep an agent label printable, bounded and header-safe. */
 function agentNameOf(value) {
@@ -32,11 +30,15 @@ function agentNameOf(value) {
   return clean || 'generic'
 }
 
-/** Drop leading sender-looking headers so a client cannot pose as another agent. */
+/**
+ * Drop leading copies of the bridge's own header so a client cannot stack a
+ * forged one in front of its text. Every other leading line, including a
+ * bracketed label such as "[WIP]", is left alone.
+ */
 function stripProvenance(text) {
   let out = text
   for (;;) {
-    const next = out.replace(PROVENANCE, '').replace(HEADER_ONLY, '')
+    const next = out.replace(BRIDGE_HEADER, '')
     if (next === out) return out
     out = next
   }
@@ -81,18 +83,23 @@ function lastAssistantText(events) {
   return ''
 }
 
-/** Turn raw session events into a compact, model-friendly transcript. */
-function compact(events, limit) {
+/**
+ * Turn raw session events into a compact, model-friendly transcript.
+ * `agentOfRequest(requestId)` returns the agent that sent a bridged prompt, or
+ * undefined for a message the bridge did not send. Text alone is not evidence:
+ * a human can type the same header into the DSH window.
+ */
+function compact(events, limit, agentOfRequest = () => undefined) {
   const out = []
   for (const e of events) {
     const d = e?.data ?? {}
     switch (e?.type) {
       case 'user/message': {
         const text = textOf(d.content)
-        const provenance = PROVENANCE.exec(text)
-        if (provenance) {
-          // A bridged prompt: show who sent it instead of a plain user message.
-          out.push({ seq: e.seq, role: 'agent-bridge', agent: provenance[1], text: clip(stripProvenance(text), 4000) })
+        // DSH records the requestId the bridge minted as source.rpcId.
+        const agent = agentOfRequest(d.source?.rpcId)
+        if (agent) {
+          out.push({ seq: e.seq, role: 'agent-bridge', agent, text: clip(stripProvenance(text), 4000) })
         } else if (d.source?.kind && d.source.kind !== 'user') {
           break
         } else {
@@ -145,17 +152,17 @@ export function apply(ctx, config = {}) {
   // client must reset its cursor when this value changes.
   const bootId = randomUUID()
 
-  // Append-only audit trail for everything the bridge dispatches. It records a
-  // hash and a length, never the prompt text itself.
+  // Append-only audit trail for everything the bridge dispatches, accepted or
+  // not. It records a hash and a length, never the prompt text itself.
   const auditFile = process.env.DSH_BRIDGE_AUDIT_FILE || join(homedir(), '.dsh', 'agent-bridge-audit.jsonl')
   const auditMaxBytes = Number(config.auditMaxBytes ?? 1048576)
-  const audit = ({ action, agent, sessionId, text, ...rest }) => {
+  const audit = ({ action, outcome, status, agent, sessionId, text, ...rest }) => {
     try {
       mkdirSync(dirname(auditFile), { recursive: true })
       try {
         if (statSync(auditFile).size >= auditMaxBytes) renameSync(auditFile, `${auditFile}.1`)
       } catch { /* first write, or a file another process is rotating */ }
-      const entry = { time: new Date().toISOString(), bootId, action, agent, sessionId, ...rest }
+      const entry = { time: new Date().toISOString(), bootId, action, outcome, status, agent, sessionId, ...rest }
       if (typeof text === 'string') {
         entry.textLength = text.length
         entry.textSha256 = createHash('sha256').update(text, 'utf8').digest('hex')
@@ -165,6 +172,15 @@ export function apply(ctx, config = {}) {
       ctx.logger?.warn?.(`agent-bridge: audit write failed: ${error}`)
     }
   }
+
+  // The requestIds this plugin minted, so a transcript can tell its own prompts
+  // from a human typing the same header. Bounded: the oldest entries drop off.
+  const bridgedRequests = new Map()
+  const rememberRequest = (requestId, agent) => {
+    bridgedRequests.set(requestId, agent)
+    if (bridgedRequests.size > 1000) bridgedRequests.delete(bridgedRequests.keys().next().value)
+  }
+  const agentOfRequest = (requestId) => (requestId ? bridgedRequests.get(requestId) : undefined)
 
   const emit = (ev) => {
     ev = { id: ++seq, bootId, time: Date.now(), ...ev }
@@ -195,6 +211,19 @@ export function apply(ctx, config = {}) {
   // unlike the guessed session event names the first version listened for.
   const pendingSeen = new Map()
   const pendingKind = (info) => (info?.event === 'approval/request' ? 'approval' : info?.event === 'user-questions/request' ? 'question' : 'other')
+  /** Announce one pending-input change, plus the deprecated needs-approval alias. */
+  const announcePending = (sessionId, kinds) => {
+    emit({ type: 'pending-input', sessionId, kinds })
+    // Kept for one release so 0.5.x SSE consumers keep working; PROTOCOL stays 1
+    // only because this alias exists. Remove it with a protocol bump in 0.7.0.
+    emit({
+      type: 'needs-approval',
+      sessionId,
+      kinds,
+      event: kinds.includes('approval') ? 'approval/request' : kinds.length ? 'user-questions/request' : undefined,
+      deprecated: true,
+    })
+  }
   const pendingSweep = () => {
     let unsettled = []
     try { unsettled = ctx.typertGateway?.getPendingRemoteEvents?.() ?? [] } catch { unsettled = [] }
@@ -208,12 +237,12 @@ export function apply(ctx, config = {}) {
       const key = [...kinds].sort().join(',')
       if (pendingSeen.get(sessionId) === key) continue
       pendingSeen.set(sessionId, key)
-      emit({ type: 'pending-input', sessionId, kinds: [...kinds].sort() })
+      announcePending(sessionId, [...kinds].sort())
     }
     for (const sessionId of [...pendingSeen.keys()]) {
       if (current.has(sessionId)) continue
       pendingSeen.delete(sessionId)
-      emit({ type: 'pending-input', sessionId, kinds: [] })
+      announcePending(sessionId, [])
     }
   }
   const pendingPollMs = Number(config.pendingPollMs ?? 1500)
@@ -244,8 +273,18 @@ export function apply(ctx, config = {}) {
     if (mode !== undefined && mode !== 'followup' && mode !== 'steer') throw Object.assign(new Error('Invalid prompt mode'), { status: 400 })
   }
   const prompt = async (sessionId, text, mode, agent) => {
-    validatePrompt(text, mode)
-    if (promptLocks.has(sessionId) || (ctx.agents.get(sessionId)?.status && ctx.agents.get(sessionId).status !== 'idle' && mode !== 'steer')) throw Object.assign(new Error('Session busy; use explicit steer mode'), { status: 409 })
+    const refusedMode = mode ?? 'followup'
+    try {
+      validatePrompt(text, mode)
+    } catch (error) {
+      audit({ action: 'prompt', outcome: 'refused', status: error.status ?? 400, agent, sessionId, mode: refusedMode, text })
+      throw error
+    }
+    if (promptLocks.has(sessionId) || (ctx.agents.get(sessionId)?.status && ctx.agents.get(sessionId).status !== 'idle' && mode !== 'steer')) {
+      const error = Object.assign(new Error('Session busy; use explicit steer mode'), { status: 409 })
+      audit({ action: 'prompt', outcome: 'refused', status: 409, agent, sessionId, mode: refusedMode, text })
+      throw error
+    }
     promptLocks.add(sessionId)
     // Capture the cursor before the turn starts: the wait must end on a turn-end
     // that is strictly newer than this.
@@ -258,8 +297,12 @@ export function apply(ctx, config = {}) {
         requestId,
         mode: mode === 'steer' ? 'steer' : 'followup',
       }, new AbortController().signal)
-      audit({ action: 'prompt', agent, sessionId, requestId, mode: mode ?? 'followup', text, eventId })
+      rememberRequest(requestId, agent)
+      audit({ action: 'prompt', outcome: 'accepted', status: 200, agent, sessionId, requestId, mode: refusedMode, text, eventId })
       return { ...(value ?? {}), sessionId, requestId, eventId, bootId }
+    } catch (error) {
+      audit({ action: 'prompt', outcome: 'failed', status: error.status ?? 500, agent, sessionId, requestId, mode: refusedMode, text, eventId })
+      throw error
     } finally { promptLocks.delete(sessionId) }
   }
 
@@ -363,11 +406,17 @@ export function apply(ctx, config = {}) {
           const events = (history.records ?? []).map(record => record.event).filter(Boolean)
           counters.reads++; entry.kind = 'read'
           const row = (await sc.list({}, signal)).items.find((i) => i.sessionId === parts[1])
-          return send(res, 200, { sessionId: parts[1], title: row?.projections?.values?.title, cwd: row?.cwd, running: state.running, pendingInput: state.pendingInput, cursor: history.cursor, hasMore: history.hasMore, entries: compact(events, limit) })
+          return send(res, 200, { sessionId: parts[1], title: row?.projections?.values?.title, cwd: row?.cwd, running: state.running, pendingInput: state.pendingInput, cursor: history.cursor, hasMore: history.hasMore, entries: compact(events, limit, agentOfRequest) })
         }
         if (req.method === 'POST' && parts.length === 1) {
           const body = await readBody(req)
-          if (body.text !== undefined) validatePrompt(body.text, body.mode)
+          if (body.text !== undefined) {
+            // Refuse before a session exists, and leave the refusal in the audit trail.
+            try { validatePrompt(body.text, body.mode) } catch (error) {
+              audit({ action: 'prompt', outcome: 'refused', status: error.status ?? 400, agent: entry.agent, mode: body.mode ?? 'followup', text: body.text })
+              throw error
+            }
+          }
           for (const field of ['cwd', 'workspace']) if (body[field] !== undefined && (typeof body[field] !== 'string' || !body[field].trim() || body[field].length > 4096)) return send(res, 400, { error: `Invalid ${field}` })
           if (body.cwd !== undefined) {
             // A workspace is a real folder, not an arbitrary string DSH must guess about.
@@ -381,19 +430,20 @@ export function apply(ctx, config = {}) {
           const created = await sc.create(ws ? { workspaceId: ws.id } : body.cwd ? { cwd: body.cwd } : {})
           entry.workspace = ws?.title
           entry.sessionId = created.sessionId
-          audit({ action: 'create', agent: entry.agent, sessionId: created.sessionId, cwd: body.cwd, workspace: ws?.title })
+          audit({ action: 'create', outcome: 'accepted', status: 200, agent: entry.agent, sessionId: created.sessionId, cwd: body.cwd, workspace: ws?.title })
           const prompted = body.text ? await prompt(created.sessionId, body.text, body.mode, entry.agent) : undefined
           return send(res, 200, { ...created, ...(prompted ?? {}), bootId, eventId: prompted?.eventId ?? seq })
         }
         if (req.method === 'POST' && parts.length === 3 && parts[2] === 'prompt') {
           const body = await readBody(req)
           counters.prompts++; entry.kind = body.mode === 'steer' ? 'steer' : 'prompt'; entry.text = clip(body.text, 200)
-          validatePrompt(body.text, body.mode)
+          // prompt() validates and audits the refusal itself.
           return send(res, 200, await prompt(parts[1], body.text, body.mode, entry.agent))
         }
         if (req.method === 'POST' && parts.length === 3 && parts[2] === 'cancel') {
-          audit({ action: 'cancel', agent: entry.agent, sessionId: parts[1] })
-          return send(res, 200, (await sc.cancel({ sessionId: parts[1] })) ?? { cancelled: true })
+          const value = (await sc.cancel({ sessionId: parts[1] })) ?? { cancelled: true }
+          audit({ action: 'cancel', outcome: 'accepted', status: 200, agent: entry.agent, sessionId: parts[1] })
+          return send(res, 200, value)
         }
       }
       send(res, 404, { error: 'not found' })

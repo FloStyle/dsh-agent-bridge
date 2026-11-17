@@ -12,8 +12,11 @@ import { bridge } from '../mcp/lib.mjs'
 test('local control API enforces auth, validates input and keeps status metadata private', async t => {
   const folder = mkdtempSync(join(tmpdir(), 'dsh-bridge-test-'))
   const file = join(folder, 'state.json')
+  const auditFile = join(folder, 'audit.jsonl')
   const previous = process.env.DSH_BRIDGE_STATE_FILE
+  const previousAudit = process.env.DSH_BRIDGE_AUDIT_FILE
   process.env.DSH_BRIDGE_STATE_FILE = file
+  process.env.DSH_BRIDGE_AUDIT_FILE = auditFile
   const probe = createServer().listen(0, '127.0.0.1')
   await once(probe, 'listening')
   const port = probe.address().port
@@ -41,6 +44,8 @@ test('local control API enforces auth, validates input and keeps status metadata
     server.closeAllConnections()
     if (previous === undefined) delete process.env.DSH_BRIDGE_STATE_FILE
     else process.env.DSH_BRIDGE_STATE_FILE = previous
+    if (previousAudit === undefined) delete process.env.DSH_BRIDGE_AUDIT_FILE
+    else process.env.DSH_BRIDGE_AUDIT_FILE = previousAudit
     rmSync(folder, { recursive: true, force: true })
   })
   await once(server, 'listening')
