@@ -64,11 +64,11 @@ Do not start a release until the owner has merged the one before it.
 Branch `fix-0.6.2`, from `main`.
 
 ### R1.0 Put this plan in the repo
-- [ ] **Steps:** Copy this file to `docs/execution-plan.md`. Copy `PHASE-3-4-PLAN.md` to `docs/phase-3-4-plan.md`. Copy `AUDIT-2026-11-17.md` to `docs/audit-2026-11-17.md`.
+- [x] **Steps:** Copy this file to `docs/execution-plan.md`. Copy `PHASE-3-4-PLAN.md` to `docs/phase-3-4-plan.md`. Copy `AUDIT-2026-11-17.md` to `docs/audit-2026-11-17.md`.
 - **Expected result:** the three files are in the PR with no content changes.
 
 ### R1.1 `turn-end` reports the right turn (L1, T1)
-- [ ] **Steps:**
+- [x] **Steps:**
   1. Test: a fake DSH runs turn 1, which ends with `pong-1`. Turn 2 is cancelled before any assistant text. Assert that the `turn-end` event for turn 2 has `reason: "cancelled"` and `lastText: null`.
   2. Test: a turn that ends with an error has `reason: "error"`.
   3. Fix: in `index.js`, build `lastText` only from `assistant/message` events whose `data.turn` equals the `turn` of the `turn/end` event. Map DSH's `reason.kind` to `completed`, `cancelled` or `error`, and keep the raw value in `reasonKind`.
@@ -77,7 +77,7 @@ Branch `fix-0.6.2`, from `main`.
 - **Evidence:** the test names, plus the `turn-end` event JSON from the live check.
 
 ### R1.2 `dsh_wait` stops on pending input (T2)
-- [ ] **Steps:**
+- [x] **Steps:**
   1. Test: after `dsh_send`, the fake DSH emits `pending-input` with `kinds: ["approval"]` for that session. `dsh_wait` with `since` returns within 2 s with `pendingInput: ["approval"]` and `timedOut` not set.
   2. Test: a `pending-input` event for another session does not end the wait.
   3. Test: a `pending-input` event with `kinds: []` does not end the wait.
@@ -85,7 +85,7 @@ Branch `fix-0.6.2`, from `main`.
 - **Expected result:** a wait never hangs on an approval or a question. The tool description says so.
 
 ### R1.3 `follow()` reports auth and protocol errors (T3)
-- [ ] **Steps:**
+- [x] **Steps:**
   1. Test: the bridge answers 401. `dsh_wait` with `since` fails within 2 s with an error that contains `401`, not `timedOut`.
   2. Test: a 429 response gives a clear error.
   3. Test: a dropped connection is still retried, as it is today.
@@ -93,7 +93,7 @@ Branch `fix-0.6.2`, from `main`.
 - **Expected result:** a wrong token is reported at once, by name.
 
 ### R1.4 Sender name always set (L2)
-- [ ] **Steps:**
+- [x] **Steps:**
   1. Make `scripts/connect-claude-code.*` and every config example in the README set `DSH_AGENT_NAME`. Check them with a test that scans the README.
   2. When `DSH_AGENT_NAME` is not set, the MCP server writes one warning line to stderr at start.
   3. `/health` gains `defaultAgentSeen: true` after a request arrives with the agent name `mcp-agent`. Add a test.
@@ -101,7 +101,7 @@ Branch `fix-0.6.2`, from `main`.
 - **Expected result:** a client without a name is visible in `doctor`, and no documented config omits it.
 
 ### R1.5 `doctor` lists plugins that DSH denies (L3)
-- [ ] **Steps:**
+- [x] **Steps:**
   1. Research: find where DSH 0.2.2-rc.3 records that it skipped `dsh-codex-subscription@3.2.6` for its version range. Check the output of `dsh plugin --profile bridge-test list`, the DSH log files and the profile state. Report the source (command or file, and the exact text).
   2. **Stop and report** if no stable source exists.
   3. Otherwise, `doctor` prints one WARN per denied plugin, with the hint `dsh plugin allow-version <name>@<version>`. First confirm in `dsh plugin --help` that this command exists, and use the real syntax.
@@ -109,7 +109,7 @@ Branch `fix-0.6.2`, from `main`.
 - **Expected result:** the WARN for `dsh-codex-subscription` appears when `doctor` runs against `desktop`. The reviewer runs that check; the executor shows the fixture test. `doctor` changes nothing.
 
 ### R1.6 No token leak after a port clash (X2)
-- [ ] **Steps:**
+- [x] **Steps:**
   1. Test: occupy the port, then start the bridge. Assert that the state file has no `token`, has `stale: true` and has an `error` string. The bridge logs an error.
   2. Test: the MCP client refuses a stale state file with the message `bridge is not listening (port in use); restart DSH or change the port`.
   3. Fix in `index.js`: handle `server.on('error')` before `listen`, and write the stale state file. Keep the saved token in memory and on the next successful listen, but do not write it to a state file that has no listener.
@@ -123,12 +123,12 @@ Branch `fix-0.6.2`, from `main`.
 - **Expected result:** with port 7788 taken, no request from the MCP client carries the token.
 
 ### R1.7 Smaller fixes (P1, T6, X4)
-- [ ] **P1:** remove `??` from `scripts/install.ps1:129` and add `#Requires -Version 5.1`. **Expected result:** `powershell.exe -NoProfile -File scripts/install.ps1 -?` parses without errors.
-- [ ] **T6:** audit a failed cancel as `outcome: "failed"`. Add a test.
-- [ ] **X4:** log unauthenticated requests with `agent: null` and `kind: "unauthorized"`. Add a test.
+- [x] **P1:** remove `??` from `scripts/install.ps1:129` and add `#Requires -Version 5.1`. **Expected result:** `powershell.exe -NoProfile -File scripts/install.ps1 -?` parses without errors.
+- [x] **T6:** audit a failed cancel as `outcome: "failed"`. Add a test.
+- [x] **X4:** log unauthenticated requests with `agent: null` and `kind: "unauthorized"`. Add a test.
 
 ### R1.8 Release preparation
-- [ ] **Steps:** bump the version to 0.6.2 in both `package.json` files. Add a `CHANGELOG.md` entry with one line per task. Pack the release locally with `npm pack`. Install the tarball on `bridge-test` with `./scripts/install.ps1 -Source local -Profile bridge-test`.
+- [x] **Steps:** bump the version to 0.6.2 in both `package.json` files. Add a `CHANGELOG.md` entry with one line per task. Pack the release locally with `npm pack`. Install the tarball on `bridge-test` with `./scripts/install.ps1 -Source local -Profile bridge-test`.
 - [ ] **Live check on `bridge-test`:** health, token, send then wait, cancel (R1.1), approval wait (R1.2, with a scratch prompt that asks for a tool approval), wrong token (R1.3), port clash (R1.6), audit lines.
 - **Expected result of R1:** CI green on the 4 jobs. All new tests named in the report. Every live check above shows PASS with its output.
 
