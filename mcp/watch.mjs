@@ -23,6 +23,11 @@ for (;;) {
       else if (all) console.log(`[dsh ${ev.type}] ${ev.sessionId} ${oneLine(ev.status ?? ev.text, 120)}`)
     }
   } catch (e) {
+    if (typeof e?.status === 'number' && e.status >= 400 && e.status < 500) {
+      console.error(`DSH bridge error ${e.status}: ${e.message}`)
+      console.error('Fix: check the token in ~/.dsh/agent-bridge.json (or DSH_BRIDGE_STATE_FILE); restart DSH after a token change.')
+      process.exit(2)
+    }
     console.error(`bridge connection lost: ${e.message}; retrying in 5s`)
     await new Promise((r) => setTimeout(r, 5000))
   }

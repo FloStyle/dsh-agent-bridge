@@ -37,7 +37,14 @@ export async function* events({ since, signal } = {}) {
   const { url, token } = bridge()
   const q = since === undefined ? '' : `?since=${since}`
   const res = await fetch(`${url}/events${q}`, { headers: { authorization: `Bearer ${token}` }, signal, redirect: 'error' })
-  if (!res.ok) throw new Error(`DSH bridge ${res.status}`)
+  if (!res.ok) {
+    let detail = ''
+    try { const body = await res.json(); if (body?.error) detail = `: ${body.error}` } catch { /* not JSON */ }
+    const error = new Error(`DSH bridge ${res.status}${detail}`)
+    // A status means the server answered: retrying cannot fix a 4xx.
+    error.status = res.status
+    throw error
+  }
   const decoder = new TextDecoder()
   let buf = ''
   for await (const chunk of res.body) {
@@ -78,6 +85,9 @@ export async function* follow({ since, signal, retryMs = 1000 } = {}) {
       }
     } catch (error) {
       if (signal?.aborted) return
+      // Retry only network errors. A 4xx is permanent: bad token, too many
+      // streams or a protocol mismatch must reach the caller by name.
+      if (typeof error?.status === 'number' && error.status >= 400 && error.status < 500) throw error
     }
     if (signal?.aborted) return
     await new Promise((resolve) => setTimeout(resolve, retryMs))
