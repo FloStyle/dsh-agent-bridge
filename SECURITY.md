@@ -8,6 +8,11 @@
 - Tokens are generated locally, not shipped. The state file is created with mode
   0600 on POSIX. On Windows, access depends on your user-profile directory ACLs;
   do not place it in a shared folder. Weak legacy tokens are regenerated.
+- The bearer token is compared in constant time, and a wrong-length token is
+  rejected without touching the stored value.
+- `/health` and the state file report `version`, `protocol`, `bootId`, `startedAt`
+  and `pid` to token holders. They identify a restart and expose no session
+  content.
 - The MCP client validates the loopback destination and refuses HTTP redirects
   so credentials cannot be forwarded to an arbitrary remote endpoint.
 - Authenticated transcript reads and SSE streams contain private conversation

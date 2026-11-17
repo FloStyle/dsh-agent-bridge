@@ -15,16 +15,29 @@ git clone https://github.com/FloStyle/dsh-agent-bridge.git
 cd dsh-agent-bridge
 ```
 
-Use the `dsh` CLI bundled with your DSH installation:
+Install from the clone, not from a loose folder. DSH caches plugin modules, so a
+copy on disk and the running plugin drift apart otherwise:
 
-```sh
-dsh plugin --profile desktop add file:/absolute/path/to/dsh-agent-bridge
+```powershell
+./scripts/install.ps1
 ```
 
-On Windows, use a forward-slash absolute path such as
-`file:C:/tools/dsh-agent-bridge`. Restart DSH when no session is working.
-For updates, remove the plugin, add it again and restart DSH; its module and
-package contents can be cached. Existing legacy Codex bridges can coexist.
+```sh
+./scripts/install.sh
+```
+
+Both scripts remove any installed copy, add this folder as a `file:` plugin and
+print the restart reminder. Restart DSH when no session is working, then check
+which build is live:
+
+```sh
+node scripts/health.mjs
+```
+
+`/health` reports `version`, `protocol`, `bootId`, `startedAt` and `pid`. Compare
+`version` with `package.json`: if they differ, the running plugin is still the
+old copy and needs a restart. The state file records the same fields. Existing
+legacy Codex bridges can coexist.
 
 ## Connect an MCP client
 
@@ -73,7 +86,7 @@ rejected; the UI uses DSH's own authenticated status route instead.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/health` | Listener status |
+| GET | `/health` | Build and process identity: version, protocol, bootId, startedAt, pid, clients, lastEventId |
 | GET | `/sessions` | Session summaries |
 | GET | `/sessions/:id?limit=40` | Transcript and execution/pending-input state |
 | POST | `/sessions` | Create, optionally prompt: `{cwd?, workspace?, text?, mode?}` |
@@ -85,6 +98,11 @@ rejected; the UI uses DSH's own authenticated status route instead.
 Transcript reads accept `limit` 0–1000; 0 requests the maximum bounded page.
 `hasMore` reports older history. The status tab shows metadata, without prompt or
 response excerpts. Authenticated transcript and SSE clients can read session content.
+
+SSE event ids restart at 1 when DSH restarts. Every event carries the `bootId` of
+the process that emitted it: clients must drop a `since` cursor from a previous
+boot. `mcp/lib.mjs` exports `follow()`, which reconnects and resets the cursor on
+that change; `mcp/watch.mjs` uses it.
 
 ## Limits and security
 
@@ -104,6 +122,7 @@ npm test
 ```
 
 Tests use an isolated temporary state file, a fake DSH controller and localhost
-HTTP. They never connect to an installed DSH instance or call a model.
+HTTP. They never connect to an installed DSH instance or call a model. CI runs
+the same suite on Windows and Ubuntu with Node 22 and 24.
 
 MIT licensed. Adapted from the original locally developed DSH bridge plugin.

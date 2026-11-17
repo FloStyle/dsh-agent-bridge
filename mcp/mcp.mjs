@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Minimal stdio MCP server exposing DeepSeek Harness sessions to any MCP client.
+import { createRequire } from 'node:module'
 import { createInterface } from 'node:readline'
-import { call as rawCall, events } from './lib.mjs'
+import { call as rawCall } from './lib.mjs'
+
+const { version } = createRequire(import.meta.url)('../package.json')
 
 /** Accept a full id ("session-3a9e…"), the bare uuid, or any unique prefix ("3a9e7ffb"). */
 async function resolveId(id) {
@@ -76,7 +79,7 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
   if (id === undefined) return
   try {
     if (method === 'initialize') {
-      return out({ jsonrpc: '2.0', id, result: { protocolVersion: params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'dsh-agent-bridge', version: '0.5.0' } } })
+      return out({ jsonrpc: '2.0', id, result: { protocolVersion: params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'dsh-agent-bridge', version } } })
     }
     if (method === 'ping') return out({ jsonrpc: '2.0', id, result: {} })
     if (method === 'tools/list') {
