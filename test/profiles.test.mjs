@@ -64,7 +64,9 @@ test('validateProfile accepts a sound profile and refuses dangerous or missing p
   }
   // An explicit override lets one sensitive root through, with a warning.
   const override = validateProfile({ name: 'x', cwd, extraRoots: [{ path: join(home, '.dsh'), allowSensitive: true }] })
-  assert.ok(!override.errors.some((e) => /\.dsh/.test(e)), JSON.stringify(override))
+  // The sensitive-folder rule is lifted. (A CI runner may have no ~/.dsh at all,
+  // so a "does not exist" error is allowed here; this checks only the rule.)
+  assert.ok(!override.errors.some((e) => /inside ~\/\.dsh/.test(e)), JSON.stringify(override))
   assert.ok(override.warnings.some((w) => /allowSensitive/.test(w)))
 })
 
