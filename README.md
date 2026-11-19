@@ -142,6 +142,7 @@ DSH, otherwise it cannot read the endpoint and token.
 | `dsh_send` | Create a session or send work to an existing session; `model` and `reasoningEffort` choose the model |
 | `dsh_models` | List the models DSH can run now, with their reasoning efforts |
 | `dsh_set_model` | Switch the model of an existing session |
+| `bridge_ping` | Send a short message to another agent or into a DSH session |
 | `dsh_profiles` | List the owner's access profiles |
 | `dsh_access` | Show a session's preset, profile and extra writable folders |
 | `dsh_apply_profile` | Apply an access profile to an existing session |
@@ -212,6 +213,32 @@ Limits, measured on DSH 0.2.2-rc.3 (`docs/spikes/`):
 
 The Bridge tab and `dsh-bridge doctor` list the sessions that run in full access.
 
+### Messages between agents (ping)
+
+Agents can send each other short messages: `review-request`, `review-result`,
+`question`, `done` or `ping`. A message carries a summary (at most 2000
+characters) and an optional `ref` (`repo`, `branch`, `sha`, `pr`); the receiver
+reads the details itself.
+
+- **From an MCP client:** the `bridge_ping` tool. The sender is `DSH_AGENT_NAME`.
+- **From a DSH session:** the `bridge_ping` tool that the bridge gives every DSH
+  agent. The sender is the calling session (`dsh:<short id>`); it cannot be chosen.
+- **To a DSH session:** `to: "dsh:<session id prefix>"`. The message is delivered
+  into that session through the DSH queue, so a busy session gets it after its
+  current turn.
+- **To wake an external agent:** run a watcher as a background command; it exits
+  with the message as one JSON line:
+
+  ```sh
+  dsh-bridge watch --agent reviewer --until message --exit
+  ```
+
+Replies use `inReplyTo` and stay in the thread. A thread stops at 6 hops. Every
+message is audited (`action: "ping"`, hash and length only). Messages are data
+from another agent, not instructions from the user, and the delivered text says
+so. This is the in-memory version: messages are lost when DSH restarts. The
+Phase 3 mailbox will keep them.
+
 ### Delegating a turn
 
 `dsh_send` returns the cursor of the turn it started; hand both fields to
@@ -272,11 +299,12 @@ rejected; the UI uses DSH's own authenticated status route instead.
 | POST | `/sessions/:id/profile` | Apply a profile: `{profile}`; the session cwd must match |
 | GET | `/sessions/:id/access` | Preset, profile and registered folders of a session |
 | GET | `/models` | The DSH model catalog: `default`, `providers`, `models[]` with `ref`, `efforts` |
-| POST | `/sessions/:id/prompt` | Prompt: `{text, mode?}`; returns `requestId`, `eventId`, `bootId` |
+| POST | `/sessions/:id/prompt` | Prompt: `{text, mode?}` (`followup` refuses a busy session, `queue` waits in the DSH queue, `steer` interrupts); returns `requestId`, `eventId`, `bootId` |
+| POST | `/ping` | Send a message: `{to, kind, summary, ref?, threadId?, inReplyTo?}` |
 | POST | `/sessions/:id/cancel` | Cancel |
 | GET | `/sessions/:id/denials` | Sandbox denials of the session (read-only), for `scripts/access-report.mjs` |
 | GET | `/workspaces` | Workspaces |
-| GET | `/events?since=<id>` | SSE stream: `turn-end`, `user-message`, `status`, `error`, `pending-input` |
+| GET | `/events?since=<id>` | SSE stream: `turn-end`, `user-message`, `status`, `error`, `pending-input`, `message`; a `gap` event first when `since` is older than the buffer |
 
 Transcript reads accept `limit` 0–1000; 0 requests the maximum bounded page.
 `hasMore` reports older history. The status tab shows metadata, without prompt or

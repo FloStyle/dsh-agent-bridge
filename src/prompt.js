@@ -7,7 +7,7 @@ const fail = (message, status) => Object.assign(new Error(message), { status })
 
 export function validatePrompt(text, mode) {
   if (typeof text !== 'string' || !text.trim() || text.length > 50000) throw fail('text must contain 1-50000 characters', 400)
-  if (mode !== undefined && mode !== 'followup' && mode !== 'steer') throw fail('Invalid prompt mode', 400)
+  if (mode !== undefined && !['followup', 'queue', 'steer'].includes(mode)) throw fail('Invalid prompt mode; use followup, queue or steer', 400)
 }
 
 export function createPrompter({ dsh, audit, hub, bootId }) {
@@ -29,7 +29,8 @@ export function createPrompter({ dsh, audit, hub, bootId }) {
       throw error
     }
     const status = dsh.agentStatus(sessionId)
-    if (promptLocks.has(sessionId) || (status && status !== 'idle' && mode !== 'steer')) {
+    // followup refuses a busy session; queue hands it to DSH's own queue; steer interrupts.
+    if (promptLocks.has(sessionId) || (status && status !== 'idle' && mode !== 'steer' && mode !== 'queue')) {
       audit({ action: 'prompt', outcome: 'refused', status: 409, agent, sessionId, mode: refusedMode, text })
       throw fail('Session busy; use explicit steer mode', 409)
     }
@@ -43,7 +44,7 @@ export function createPrompter({ dsh, audit, hub, bootId }) {
         sessionId,
         content: [{ type: 'text', text: tagPrompt(text, agent) }],
         requestId,
-        mode: mode === 'steer' ? 'steer' : 'followup',
+        mode: mode === 'steer' ? 'steer' : mode === 'queue' ? 'queue' : 'followup',
       }, new AbortController().signal)
       rememberRequest(requestId, agent)
       audit({ action: 'prompt', outcome: 'accepted', status: 200, agent, sessionId, requestId, mode: refusedMode, text, eventId })

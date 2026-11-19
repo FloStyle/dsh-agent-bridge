@@ -26,6 +26,8 @@ export function createEventHub({ bootId, ringSize = 500, maxClients = 16 }) {
       if (clients.size >= maxClients) return false
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
       res.flushHeaders()
+      // T5: the client missed events that left the ring; say so before the rest.
+      if (ring.length && since < ring[0].id - 1) res.write(`data: ${JSON.stringify({ type: 'gap', bootId, from: since, oldest: ring[0].id })}\n\n`)
       for (const ev of ring) if (ev.id > since) res.write(frame(ev))
       clients.add(res)
       const ping = setInterval(() => res.write(': ping\n\n'), 25000)

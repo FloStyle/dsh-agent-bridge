@@ -2,6 +2,10 @@
 
 ## Unreleased (0.7.0-pre)
 
+- R3.5 ping-lite: `POST /ping` and the MCP tool `bridge_ping` send short messages (`ping`, `review-request`, `review-result`, `question`, `done`) with a thread, `inReplyTo`, an optional `ref`, a hop limit of 6 and an audit line. DSH agents get a `bridge_ping` tool whose sender is the calling session. Messages to `dsh:<id>` are delivered into that session through the DSH queue. `watch --agent <name> --until message --exit` wakes an external agent. In memory only.
+- R3.4 `mode: "queue"` hands a prompt to the DSH queue of a busy session; `followup` still refuses one.
+- R3.6 `since` must be a non-negative integer; a cursor older than the event buffer gets a `gap` event first (T5); only a loopback `Host` header is accepted (X3).
+- Spike notes `docs/spikes/dsh-tools.md` and `docs/spikes/dsh-prompt-modes.md`.
 - WB access profiles (owner-approved lighter scope). `dsh-bridge profile list|show|add|remove|validate` edits `~/.dsh/agent-bridge-profiles.json` (preview by default, `--yes` writes). `POST /sessions {profile}` / `dsh_send {profile}` start a session in the profile cwd with its preset and extra writable folders; `POST /sessions/:id/profile` / `dsh_apply_profile` apply one to a session with the same cwd. The bridge re-registers the folders after a DSH restart. Full access is refused; sensitive folders need `allowSensitive`. Every grant and preset change is audited.
 - WB visibility: `GET /sessions/:id/access` / `dsh_access`; `dsh_list` shows each session's preset; the Bridge tab and `doctor` list sessions in full access.
 - The DSH sandbox and preset services load through a sub-plugin, so a DSH build without them disables only the access features.

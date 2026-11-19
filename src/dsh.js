@@ -81,6 +81,31 @@ export function createDsh(ctx) {
     onAgentError: (handler) => ctx.on('agent/error', handler),
     /** Register a route on DSH's own authenticated API, removed with the plugin. */
     registerRoute: (route, label) => ctx.effect(() => ctx.connection.fetch.register(route), label),
+    /**
+     * Give DSH agents tools. The tools service is optional like the access
+     * services, so it comes through a sub-plugin; definitions go through DSH's
+     * own defineTool when the plugin can load it.
+     */
+    registerTools(definitions, label) {
+      if (typeof ctx.plugin === 'function') {
+        try {
+          ctx.plugin({
+            name: 'agent-bridge-tools',
+            inject: ['tools'],
+            async apply(sub) {
+              let define = (definition) => definition
+              try { define = (await import('@deepseek-ai/dsh-tools')).defineTool ?? define } catch { /* plain definitions */ }
+              for (const definition of definitions) sub.effect(() => sub.tools.register(define(definition)), `${label}: ${definition.name}`)
+            },
+          })
+        } catch (error) {
+          ctx.logger?.warn?.(`agent-bridge: DSH tools disabled: ${error}`)
+        }
+      } else if (ctx.tools?.register) {
+        // Test contexts provide the service directly.
+        for (const definition of definitions) ctx.tools.register(definition)
+      }
+    },
     /** Run `dispose` when the plugin unloads. */
     onDispose: (dispose, label) => ctx.effect(() => dispose, label),
   }

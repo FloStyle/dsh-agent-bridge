@@ -14,6 +14,8 @@ import { createDsh } from './src/dsh.js'
 import { createEventHub, relayDshEvents } from './src/events.js'
 import { startPendingSweep } from './src/pending.js'
 import { createPrompter } from './src/prompt.js'
+import { bridgeTools } from './src/dsh-tools.js'
+import { createMessenger } from './src/messages.js'
 import { createHandler } from './src/routes.js'
 import { createStatus } from './src/status.js'
 import { PROTOCOL, VERSION as version } from './src/version.js'
@@ -57,6 +59,8 @@ export function apply(ctx, config = {}) {
   const pendingTimer = startPendingSweep(dsh, hub.emit, Number(config.pendingPollMs ?? 1500))
   const status = createStatus({ version, protocol: PROTOCOL, bootId, port, hub })
   const prompter = createPrompter({ dsh, audit, hub, bootId })
+  const messenger = createMessenger({ dsh, hub, audit, prompter })
+  dsh.registerTools(bridgeTools(messenger), 'agent-bridge: tools')
 
   /** Sessions whose DSH permission preset is full access, for the Bridge tab warning. */
   const fullAccessSessions = async () => {
@@ -79,7 +83,7 @@ export function apply(ctx, config = {}) {
     services: { checked: inject.length, missing: missingServices },
     defaultAgentSeen: status.state.defaultAgentSeen,
   })
-  const server = createServer(createHandler({ dsh, hub, status, authorized: makeAuthorized(token), audit, prompter, access, config, health }))
+  const server = createServer(createHandler({ dsh, hub, status, authorized: makeAuthorized(token), audit, prompter, access, messenger, config, health, port }))
 
   // X2/F1: a failed listen writes a stale marker without the token, unless the
   // state file belongs to another live bridge on this port.
