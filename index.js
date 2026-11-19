@@ -13,14 +13,11 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
-import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { parseDenials } from './src/denials.js'
+import { PROTOCOL, VERSION as version } from './src/version.js'
 
-const { version } = createRequire(import.meta.url)('./package.json')
-/** Wire contract for HTTP and SSE. Bump only for a breaking change. */
-const PROTOCOL = 1
 
 /** The bridge's own sender line. Only this exact form is stripped from client text. */
 const BRIDGE_HEADER = /^[ \t]*\[[ \t]*dsh-agent-bridge[ \t]*\][ \t]*from[ \t]+[^\]\n]{0,64}[ \t]*(?:\r?\n)+/i
@@ -399,6 +396,15 @@ export function apply(ctx, config = {}) {
     fetch: () => new Response(JSON.stringify(statusPayload()), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }),
   }), 'agent-bridge: status route')
 
+  // P3: one session list per second at most; a create clears it.
+  let listCache
+  const listSessions = async (signal) => {
+    if (listCache && Date.now() - listCache.at < 1000) return listCache.value
+    const value = await sc.list({}, signal)
+    listCache = { at: Date.now(), value }
+    return value
+  }
+
   const server = createServer(async (req, res) => {
     let url
     try { url = new URL(req.url, 'http://127.0.0.1') }
@@ -460,7 +466,7 @@ export function apply(ctx, config = {}) {
 
       if (parts[0] === 'sessions') {
         if (req.method === 'GET' && parts.length === 1) {
-          const { items } = await sc.list({}, signal)
+          const { items } = await listSessions(signal)
           return send(res, 200, { items })
         }
         if (req.method === 'GET' && parts.length === 2) {
@@ -470,7 +476,7 @@ export function apply(ctx, config = {}) {
           const history = await sc.events({ address: { kind: 'session', sessionId: parts[1] }, maxMessages: Math.min(1000, Math.max(1, limit || 1000)) }, signal)
           const events = (history.records ?? []).map(record => record.event).filter(Boolean)
           counters.reads++; entry.kind = 'read'
-          const row = (await sc.list({}, signal)).items.find((i) => i.sessionId === parts[1])
+          const row = (await listSessions(signal)).items.find((i) => i.sessionId === parts[1])
           return send(res, 200, { sessionId: parts[1], title: row?.projections?.values?.title, cwd: row?.cwd, running: state.running, pendingInput: state.pendingInput, cursor: history.cursor, hasMore: history.hasMore, entries: compact(events, limit, agentOfRequest) })
         }
         if (req.method === 'GET' && parts.length === 3 && parts[2] === 'denials') {
@@ -486,7 +492,7 @@ export function apply(ctx, config = {}) {
             beforeSeq = history.cursor
           }
           counters.reads++; entry.kind = 'denials'
-          const row = (await sc.list({}, signal)).items.find((i) => i.sessionId === parts[1])
+          const row = (await listSessions(signal)).items.find((i) => i.sessionId === parts[1])
           return send(res, 200, { sessionId: parts[1], cwd: row?.cwd, truncated: hasMore, denials: parseDenials(pages.flat()) })
         }
         if (req.method === 'POST' && parts.length === 1) {
@@ -509,6 +515,7 @@ export function apply(ctx, config = {}) {
           counters.creates++; entry.kind = 'create'; entry.text = clip(body.text, 200); entry.cwd = body.cwd
           const ws = await resolveWorkspace(body.workspace, body.cwd)
           const created = await sc.create(ws ? { workspaceId: ws.id } : body.cwd ? { cwd: body.cwd } : {})
+          listCache = undefined
           entry.workspace = ws?.title
           entry.sessionId = created.sessionId
           audit({ action: 'create', outcome: 'accepted', status: 200, agent: entry.agent, sessionId: created.sessionId, cwd: body.cwd, workspace: ws?.title })

@@ -9,6 +9,7 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { parseDeniedPlugins, deniedPluginHint } from './plugin-list.mjs'
+import { PROTOCOL, VERSION } from '../src/version.js'
 
 const args = process.argv.slice(2)
 const argValue = (name, fallback) => {
@@ -21,7 +22,7 @@ const profileDir = join(homedir(), '.dsh', 'profiles', profile)
 const stateFile = process.env.DSH_BRIDGE_STATE_FILE || join(homedir(), '.dsh', 'agent-bridge.json')
 const packageName = 'dsh-agent-bridge'
 
-const expectedProtocol = 1
+const expectedProtocol = PROTOCOL
 let failures = 0
 let warnings = 0
 const ok = (label, detail = '') => console.log(`OK    ${label}${detail ? `: ${detail}` : ''}`)
@@ -46,7 +47,7 @@ let installedVersion
 if (existsSync(installedManifest)) {
   installedVersion = JSON.parse(readFileSync(installedManifest, 'utf8')).version
 } else {
-  bad(`plugin in profile '${profile}'`, 'not installed', `dsh plugin --profile ${profile} add github:FloStyle/dsh-agent-bridge#v0.6.2`)
+  bad(`plugin in profile '${profile}'`, 'not installed', `dsh-bridge install --profile ${profile} --version ${VERSION}`)
 }
 
 const repoVersion = (() => {
@@ -145,7 +146,7 @@ if (!existsSync(stateFile)) {
 // ---- 4. MCP client entry -------------------------------------------------------------------------
 const mcpEntry = join(profileDir, 'node_modules', packageName, 'mcp', 'mcp.mjs')
 if (existsSync(mcpEntry)) ok('MCP client entry', mcpEntry)
-else bad('MCP client entry', `missing at ${mcpEntry}`, `dsh plugin --profile ${profile} add github:FloStyle/dsh-agent-bridge#v0.6.2`)
+else bad('MCP client entry', `missing at ${mcpEntry}`, `dsh-bridge install --profile ${profile} --version ${VERSION}`)
 
 console.log('')
 if (failures) {

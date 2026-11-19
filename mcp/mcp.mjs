@@ -19,6 +19,8 @@ if (!process.env.DSH_AGENT_NAME) {
 /** Accept a full id ("session-3a9e…"), the bare uuid, or any unique prefix ("3a9e7ffb"). */
 async function resolveId(id) {
   if (!id) return id
+  // P3: a full id needs no lookup.
+  if (/^session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id).trim())) return String(id).trim()
   const key = String(id).trim().replace(/^session-/, '').toLowerCase()
   const { items } = await rawCall('GET', '/sessions')
   const hits = items.filter((i) => i.sessionId.replace(/^session-/, '').toLowerCase().startsWith(key))

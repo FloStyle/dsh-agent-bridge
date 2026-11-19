@@ -1,0 +1,9 @@
+#!/bin/sh
+# dsh-bridge launcher for macOS and Linux. Runtime order: DSH_NODE, then node
+# on PATH. The DeepSeek Harness install path on these systems is not known yet;
+# set DSH_NODE to use DSH's own runtime.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -n "$DSH_NODE" ]; then
+  DSH_BRIDGE_RUNTIME=env exec "$DSH_NODE" "$here/dsh-bridge.mjs" "$@"
+fi
+DSH_BRIDGE_RUNTIME=path exec node "$here/dsh-bridge.mjs" "$@"

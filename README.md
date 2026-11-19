@@ -7,56 +7,53 @@ DSH uses whichever model provider you configure.
 
 ## Install
 
-Requires DeepSeek Harness **0.2.2-rc.1** to **0.3.0** and Node.js **22 or newer**
-for the external MCP client. The plugin declares that range in `package.json`
-(`engines.dsh` and `dsh.compatibility.dsh`).
+Requires DeepSeek Harness **0.2.2-rc.1** to **0.3.0**. Nothing else: the
+`dsh-bridge` command runs on the Node.js that DeepSeek Harness ships. Node.js 22
+or newer on `PATH` also works, and `DSH_NODE` can name any runtime.
 
-One line, from the machine that runs DSH:
-
-```sh
-dsh plugin add github:FloStyle/dsh-agent-bridge#v0.6.1
-```
-
-Or the release tarball, if you prefer a pinned artifact:
+The plugin itself installs with one line, from the machine that runs DSH:
 
 ```sh
-dsh plugin add https://github.com/FloStyle/dsh-agent-bridge/releases/download/v0.6.1/dsh-agent-bridge-0.6.1.tgz
+dsh plugin add github:FloStyle/dsh-agent-bridge#v<version>
 ```
 
-Both go through `pnpm` in the profile, so they work for any profile
-(`dsh plugin --profile desktop add ...`). Restart DSH when no session is working,
-then check what is live:
+After that, everything goes through `dsh-bridge`, in the installed package:
+
+| Windows | macOS and Linux |
+| --- | --- |
+| `%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-agent-bridge\bin\dsh-bridge.cmd` | `~/.dsh/profiles/desktop/node_modules/dsh-agent-bridge/bin/dsh-bridge` |
+
+The Windows launcher picks `DSH_NODE`, then DSH's own runtime
+(`DeepSeek Harness.exe` with `ELECTRON_RUN_AS_NODE=1`), then `node` on `PATH`. The
+POSIX launcher picks `DSH_NODE`, then `node`. `dsh-bridge runtime` shows which
+one runs.
 
 ```sh
-node "$HOME/.dsh/profiles/desktop/node_modules/dsh-agent-bridge/scripts/doctor.mjs"
+dsh-bridge doctor                 # read-only checks, one fix line per failure
+dsh-bridge health                 # the running bridge's /health
+dsh-bridge install --dry-run      # show what an upgrade would do
 ```
 
-The doctor is read-only: it checks the DSH CLI, the installed version, the state
-file, `/health` (version, protocol, injected services) and the MCP entry, and
-prints a fix line for each failure. `/health` reports `version`, `protocol`,
-`bootId`, `startedAt`, `pid` and the injected-service check. Existing legacy Codex
-bridges can coexist.
+Restart DSH while no session is working after any install or upgrade.
 
-### Upgrade, rollback, uninstall
-
-```powershell
-./scripts/install.ps1 -Source release -Version 0.6.1 -Profile desktop
-```
+### Upgrade, offline install, rollback, uninstall
 
 ```sh
-./scripts/install.sh --source release --version 0.6.1 --profile desktop
+dsh-bridge install --source release --version <version> --profile desktop
+dsh-bridge install --source file --tarball dsh-agent-bridge-<version>.tgz --sha256 <hex>
+dsh-bridge uninstall --profile desktop        # asks before deleting private files; --purge skips the question
 ```
 
-`-Source` / `--source` takes `release` (tarball, default), `github` (tag) or
-`local` (this clone, for development); `-Version` / `--version` defaults to the
-latest release. The script backs up `package.json`, `pnpm-lock.yaml` and the cordis
-files to `~/.dsh/backups/<profile>-<timestamp>`, adds the new build **before**
-anything is removed, and restores the backup if the install fails. It never reads
-the bridge token. Rollback is copying that backup back and restarting DSH.
+`--source` takes `release` (the GitHub release tarball, default), `github` (the
+tag), `local` (this clone) or `file` (a tarball on disk, checked against its
+SHA-256 before anything changes). Every command that changes something accepts
+`--dry-run`. `install` backs up `package.json`, `pnpm-lock.yaml` and the cordis
+files to `~/.dsh/backups/<profile>-<timestamp>`, adds the new build before
+anything is removed, and restores the backup if the add fails. Rollback is
+copying that backup back and restarting DSH. Neither command reads the token.
 
-To remove the plugin, run `./scripts/uninstall.ps1` (or `uninstall.sh`). It asks
-before deleting `~/.dsh/agent-bridge.json` and the audit log; `-Purge` / `--purge`
-skips the question.
+The scripts in `scripts/` (`install`, `uninstall`, `connect-claude-code`) are
+deprecated wrappers around these commands.
 
 ### Development
 
@@ -66,32 +63,37 @@ plugin modules, so a copy on disk and the running plugin drift apart otherwise.
 ```sh
 git clone https://github.com/FloStyle/dsh-agent-bridge.git
 cd dsh-agent-bridge
-./scripts/install.ps1 -Source local        # or: ./scripts/install.sh --source local
-node scripts/health.mjs
+node bin/dsh-bridge.mjs install --source local --profile bridge-test
+node bin/dsh-bridge.mjs live-check --profile bridge-test
 ```
+
+`live-check` creates and cancels a scratch session. It refuses the `desktop`
+profile unless `--read-only` is given.
 
 ## Connect an MCP client
 
-The client reads the endpoint and generated bearer token from
-`~/.dsh/agent-bridge.json`, so **no token appears in any of these configs**. This
-file is **private runtime state**: never commit or share it.
-`DSH_BRIDGE_STATE_FILE` optionally selects another private state file; set the same
-path for DSH and the MCP client. `DSH_AGENT_NAME` is a display label, not an
-identity or permission boundary.
+`dsh-bridge connect` prints the configuration for a client, with an absolute
+runtime path, the installed MCP entry and a sender name. Nothing in it is a
+token: the client reads the endpoint from `~/.dsh/agent-bridge.json` and the token
+from the private files next to it at run time. These files are **private runtime
+state**: never commit or share them. `DSH_BRIDGE_STATE_FILE` selects another state
+file; set the same path for DSH and the client. `DSH_AGENT_NAME` is a display
+label, not an identity or permission boundary.
 
-Every config below uses the installed copy:
-`~/.dsh/profiles/<profile>/node_modules/dsh-agent-bridge/mcp/mcp.mjs`. Replace
-`desktop` with your profile and the home directory with yours.
+```sh
+dsh-bridge connect claude --name claude-code            # prints the command; --execute runs it
+dsh-bridge connect codex --name codex                   # prints the TOML; --execute appends it after a backup
+dsh-bridge connect generic --name cursor                # prints a JSON block for other clients
+```
+
+The printed configurations look like this (paths shortened; `connect` fills in
+yours):
 
 ### Claude Code
 
 ```sh
-claude mcp add dsh-agent-bridge --env DSH_AGENT_NAME=claude-code -- node "$HOME/.dsh/profiles/desktop/node_modules/dsh-agent-bridge/mcp/mcp.mjs"
+claude mcp add dsh-agent-bridge --env ELECTRON_RUN_AS_NODE=1 --env DSH_AGENT_NAME=claude-code -- "C:/…/DeepSeek Harness/DeepSeek Harness.exe" "C:/…/.dsh/profiles/desktop/node_modules/dsh-agent-bridge/mcp/mcp.mjs"
 ```
-
-`scripts/connect-claude-code.ps1` and `scripts/connect-claude-code.sh` print the
-same command with the right path; pass `-Execute` / `--execute` to run it.
-Restart the client so it picks up the new server.
 
 ### Codex
 
@@ -99,37 +101,34 @@ Restart the client so it picks up the new server.
 
 ```toml
 [mcp_servers.dsh-agent-bridge]
-command = "node"
-args = ["C:/Users/<you>/.dsh/profiles/desktop/node_modules/dsh-agent-bridge/mcp/mcp.mjs"]
-env = { DSH_AGENT_NAME = "codex" }
+command = "C:/…/DeepSeek Harness/DeepSeek Harness.exe"
+args = ["C:/…/.dsh/profiles/desktop/node_modules/dsh-agent-bridge/mcp/mcp.mjs"]
+env = { ELECTRON_RUN_AS_NODE = "1", DSH_AGENT_NAME = "codex" }
 ```
 
 ### Cursor and other `mcpServers` clients
-
-`~/.cursor/mcp.json` (the same shape works for any client that reads
-`mcpServers`):
 
 ```json
 {
   "mcpServers": {
     "dsh-agent-bridge": {
-      "command": "node",
-      "args": ["C:/Users/<you>/.dsh/profiles/desktop/node_modules/dsh-agent-bridge/mcp/mcp.mjs"],
-      "env": { "DSH_AGENT_NAME": "cursor" }
+      "command": "C:/…/DeepSeek Harness/DeepSeek Harness.exe",
+      "args": ["C:/…/.dsh/profiles/desktop/node_modules/dsh-agent-bridge/mcp/mcp.mjs"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1", "DSH_AGENT_NAME": "cursor" }
     }
   }
 }
 ```
 
-Use forward slashes on Windows inside JSON and TOML. If your client runs under a
-different user or `HOME`, set `DSH_BRIDGE_STATE_FILE` in `env` to the same path DSH
-uses instead of relying on `~/.dsh/agent-bridge.json`.
+Without DSH's runtime, the command is the absolute path of `node` and
+`ELECTRON_RUN_AS_NODE` is omitted. Restart the client so it picks up the server.
 
-For turn-end notifications without polling, run the watcher through Claude Code's
-Monitor tool. It prints one line per notification on stdout:
+For turn-end notifications without polling, run the watcher as a background
+command in your client (for example a Monitor tool). It prints one line per
+notification; `--session` takes a full id or a unique prefix:
 
 ```sh
-node /absolute/path/to/dsh-agent-bridge/mcp/watch.mjs --session <full-session-id>
+dsh-bridge watch --session 3a9e7ffb
 ```
 
 The MCP process must see the same `HOME` (or the same `DSH_BRIDGE_STATE_FILE`) as
@@ -210,6 +209,7 @@ rejected; the UI uses DSH's own authenticated status route instead.
 | POST | `/sessions` | Create, optionally prompt: `{cwd?, workspace?, text?, mode?}`; returns `sessionId`, `requestId`, `eventId`, `bootId` |
 | POST | `/sessions/:id/prompt` | Prompt: `{text, mode?}`; returns `requestId`, `eventId`, `bootId` |
 | POST | `/sessions/:id/cancel` | Cancel |
+| GET | `/sessions/:id/denials` | Sandbox denials of the session (read-only), for `scripts/access-report.mjs` |
 | GET | `/workspaces` | Workspaces |
 | GET | `/events?since=<id>` | SSE stream: `turn-end`, `user-message`, `status`, `error`, `pending-input` |
 
@@ -251,6 +251,10 @@ different persistence guarantees and is not replaced automatically.
 ```sh
 npm test
 ```
+
+`node scripts/access-report.mjs` (or `dsh-bridge access-report`) lists the sandbox
+denials of your sessions with one suggestion per folder; see
+[docs/access-guide.md](docs/access-guide.md).
 
 Tests use an isolated temporary state file, a fake DSH controller and localhost
 HTTP. They never connect to an installed DSH instance or call a model. CI runs
