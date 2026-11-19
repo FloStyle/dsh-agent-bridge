@@ -2,6 +2,9 @@
 
 ## Unreleased (0.7.0-pre)
 
+- WB access profiles (owner-approved lighter scope). `dsh-bridge profile list|show|add|remove|validate` edits `~/.dsh/agent-bridge-profiles.json` (preview by default, `--yes` writes). `POST /sessions {profile}` / `dsh_send {profile}` start a session in the profile cwd with its preset and extra writable folders; `POST /sessions/:id/profile` / `dsh_apply_profile` apply one to a session with the same cwd. The bridge re-registers the folders after a DSH restart. Full access is refused; sensitive folders need `allowSensitive`. Every grant and preset change is audited.
+- WB visibility: `GET /sessions/:id/access` / `dsh_access`; `dsh_list` shows each session's preset; the Bridge tab and `doctor` list sessions in full access.
+- The DSH sandbox and preset services load through a sub-plugin, so a DSH build without them disables only the access features.
 - R3.1 `index.js` (645 lines) is split into `src/`: `auth.js` (token and state file), `audit.js`, `events.js` (SSE hub and DSH event relay), `pending.js`, `prompt.js` (prompts and model selection), `routes.js`, `http.js`, `status.js`, `transcript.js`, `workspaces.js`. `index.js` keeps only the wiring (100 lines). No behaviour change: every test passes unchanged.
 - R3.2 `src/dsh.js` is the only module that touches the DSH context.
 

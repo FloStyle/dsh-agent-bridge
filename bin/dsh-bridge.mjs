@@ -16,6 +16,7 @@ const HELP = `dsh-bridge ${VERSION}
   connect     claude|codex|generic [--name agent] [--profile p] [--execute]
   doctor      [--profile p]
   health
+  profile     list|show|add|remove|validate [name] [--cwd d --root d... --preset p --description t] [--yes]
   live-check  [--profile p] [--read-only]
   watch       [--session id] [--all]
   access-report [--session id|--workspace name] [--since 7d] [--json]
@@ -30,8 +31,9 @@ function parse(argv) {
     if (!arg.startsWith('--')) { options._.push(arg); continue }
     const key = arg.slice(2)
     const next = argv[i + 1]
-    if (next === undefined || next.startsWith('--')) options[key] = true
-    else { options[key] = next; i++ }
+    const value = next === undefined || next.startsWith('--') ? true : (i++, next)
+    // A repeated option (--root a --root b) becomes a list.
+    options[key] = key in options ? [].concat(options[key], value) : value
   }
   return options
 }
@@ -58,6 +60,9 @@ try {
       break
     case 'connect':
       process.exitCode = (await import('../src/cli/connect.js')).connect(options)
+      break
+    case 'profile':
+      process.exitCode = (await import('../src/cli/access-profiles.js')).profileCommand(options)
       break
     case 'live-check':
       process.exitCode = await (await import('../src/cli/live-check.js')).liveCheck(options)

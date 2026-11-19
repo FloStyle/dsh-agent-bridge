@@ -40,10 +40,12 @@ export function createEventHub({ bootId, ringSize = 500, maxClients = 16 }) {
 }
 
 /** Relay DSH session and agent events to the hub. */
-export function relayDshEvents(dsh, hub) {
+export function relayDshEvents(dsh, hub, { onSession } = {}) {
   const titleOf = (session) => session?.header?.title ?? session?.title
   dsh.onSessionEvent((session, event) => {
     try {
+      dsh.rememberSession(session)
+      onSession?.(session)
       if (event.type === 'turn/end') {
         const turn = event.data?.turn
         const reasonKind = event.data?.reason?.kind

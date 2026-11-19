@@ -44,7 +44,7 @@ const tools = [
     description: 'List DeepSeek Harness sessions (id, title, cwd, model, running, activity). Session ids may be given in full, without the session- prefix, or as a unique prefix like 3a9e7ffb.',
     annotations: readOnly('List DSH sessions'),
     inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: MAX_LIMIT, description: 'max rows, default 20' } } },
-    run: async ({ limit = 20 }) => (await call('GET', '/sessions')).items.slice(0, limit).map((i) => ({ sessionId: i.sessionId, shortId: i.sessionId.replace(/^session-/, '').slice(0, 8), title: i.projections?.values?.title, cwd: i.cwd, model: modelRef(i.projections?.values?.modelSelection), running: i.running, updatedAt: new Date(i.updatedAt).toISOString() })),
+    run: async ({ limit = 20 }) => (await call('GET', '/sessions')).items.slice(0, limit).map((i) => ({ sessionId: i.sessionId, shortId: i.sessionId.replace(/^session-/, '').slice(0, 8), title: i.projections?.values?.title, cwd: i.cwd, model: modelRef(i.projections?.values?.modelSelection), preset: i.projections?.values?.permissions?.currentValue, running: i.running, updatedAt: new Date(i.updatedAt).toISOString() })),
   },
   {
     name: 'dsh_workspaces',
@@ -76,6 +76,27 @@ const tools = [
     run: async ({ sessionId, model, reasoningEffort }) => call('POST', `/sessions/${encodeURIComponent(await resolveId(sessionId))}/model`, { model, reasoningEffort }),
   },
   {
+    name: 'dsh_profiles',
+    description: 'List the access profiles the owner defined: name, description, cwd, extra writable folders and preset. Pass a profile name as `profile` to dsh_send to start a session with it.',
+    annotations: readOnly('List access profiles'),
+    inputSchema: { type: 'object', properties: {} },
+    run: async () => (await call('GET', '/profiles')).items,
+  },
+  {
+    name: 'dsh_access',
+    description: 'Show the access of a DSH session: its permission preset, the profile applied through the bridge, and the extra writable folders registered now.',
+    annotations: readOnly('Show DSH session access'),
+    inputSchema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' } } },
+    run: async ({ sessionId }) => call('GET', `/sessions/${encodeURIComponent(await resolveId(sessionId))}/access`),
+  },
+  {
+    name: 'dsh_apply_profile',
+    description: 'Apply an owner-defined access profile to an existing session. The session must work in the profile cwd. Full access is never granted this way.',
+    annotations: write('Apply an access profile'),
+    inputSchema: { type: 'object', required: ['sessionId', 'profile'], properties: { sessionId: { type: 'string' }, profile: { type: 'string', maxLength: 64 } } },
+    run: async ({ sessionId, profile }) => call('POST', `/sessions/${encodeURIComponent(await resolveId(sessionId))}/profile`, { profile }),
+  },
+  {
     name: 'dsh_read',
     description: 'Read a DSH session as a compact transcript (user, agent-bridge, assistant, tool calls/results, turn ends).',
     annotations: readOnly('Read a DSH session'),
@@ -97,11 +118,12 @@ const tools = [
         mode: { type: 'string', enum: ['followup', 'steer'] },
         model: { type: 'string', maxLength: 200, description: 'model for this work: "provider/model" from dsh_models, a unique model id, or a model name. New sessions otherwise start on the DSH default.' },
         reasoningEffort: { type: 'string', maxLength: 40, description: 'reasoning effort for that model, from dsh_models' },
+        profile: { type: 'string', maxLength: 64, description: 'new session only: an access profile from dsh_profiles; it sets the cwd, preset and extra writable folders' },
       },
     },
-    run: async ({ text, sessionId, cwd, workspace, mode, model, reasoningEffort }) => {
+    run: async ({ text, sessionId, cwd, workspace, mode, model, reasoningEffort, profile }) => {
       sessionId = await resolveId(sessionId)
-      if (!sessionId) return call('POST', '/sessions', { text, cwd, workspace, mode, model, reasoningEffort })
+      if (!sessionId) return call('POST', '/sessions', { text, cwd, workspace, mode, model, reasoningEffort, profile })
       // Switch first, so the prompt already runs on the chosen model.
       const switched = model ? await call('POST', `/sessions/${encodeURIComponent(sessionId)}/model`, { model, reasoningEffort }) : undefined
       return { sessionId, ...(switched ? { model: switched.selected } : {}), ...(await call('POST', `/sessions/${encodeURIComponent(sessionId)}/prompt`, { text, mode })) }

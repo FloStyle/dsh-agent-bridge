@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { createAccess } from './src/access.js'
 import { createAudit } from './src/audit.js'
 import { healthyOwner, makeAuthorized, resolveToken, writeListening, writeStale } from './src/auth.js'
 import { createDsh } from './src/dsh.js'
@@ -51,17 +52,26 @@ export function apply(ctx, config = {}) {
     logger: dsh.logger,
   })
   const hub = createEventHub({ bootId })
-  relayDshEvents(dsh, hub)
+  const access = createAccess({ dsh, audit, stateFile })
+  relayDshEvents(dsh, hub, { onSession: (session) => access.seen(session) })
   const pendingTimer = startPendingSweep(dsh, hub.emit, Number(config.pendingPollMs ?? 1500))
   const status = createStatus({ version, protocol: PROTOCOL, bootId, port, hub })
   const prompter = createPrompter({ dsh, audit, hub, bootId })
 
+  /** Sessions whose DSH permission preset is full access, for the Bridge tab warning. */
+  const fullAccessSessions = async () => {
+    try {
+      const { items } = await dsh.listSessions(new AbortController().signal)
+      return items.filter((i) => i.projections?.values?.permissions?.currentValue === 'danger-full-access')
+        .map((i) => ({ sessionId: i.sessionId, title: i.projections?.values?.title, cwd: i.cwd }))
+    } catch { return [] }
+  }
   // Same status data on DSH's own authenticated API, for the Bridge tab (same origin as the UI).
   dsh.registerRoute({
     path: '/api/agent-bridge/status',
     methods: ['GET'],
     requestBody: 'buffered',
-    fetch: () => new Response(JSON.stringify(status.payload()), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }),
+    fetch: async () => new Response(JSON.stringify({ ...status.payload(), fullAccess: await fullAccessSessions() }), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }),
   }, 'agent-bridge: status route')
 
   const health = () => ({
@@ -69,7 +79,7 @@ export function apply(ctx, config = {}) {
     services: { checked: inject.length, missing: missingServices },
     defaultAgentSeen: status.state.defaultAgentSeen,
   })
-  const server = createServer(createHandler({ dsh, hub, status, authorized: makeAuthorized(token), audit, prompter, config, health }))
+  const server = createServer(createHandler({ dsh, hub, status, authorized: makeAuthorized(token), audit, prompter, access, config, health }))
 
   // X2/F1: a failed listen writes a stale marker without the token, unless the
   // state file belongs to another live bridge on this port.
