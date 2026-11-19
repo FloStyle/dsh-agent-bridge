@@ -99,11 +99,17 @@ function lastAssistantText(events, turn) {
   return null
 }
 
-/** DSH TurnEndReason kinds to the three values clients act on. */
+/**
+ * DSH TurnEndReason kinds to the values clients act on. DSH 0.2.2-rc.3 defines
+ * completed, aborted, interrupted, error, max-tokens, blocked and forked. Only
+ * `completed` means the turn finished; everything else that is not a cancel
+ * or an error, including kinds a later DSH adds, is `incomplete`.
+ */
 function turnEndReason(kind) {
+  if (kind === 'completed') return 'completed'
   if (kind === 'aborted' || kind === 'interrupted') return 'cancelled'
   if (kind === 'error') return 'error'
-  return 'completed'
+  return 'incomplete'
 }
 
 /**
@@ -397,9 +403,6 @@ export function apply(ctx, config = {}) {
     try { url = new URL(req.url, 'http://127.0.0.1') }
     catch { return send(res, 400, { error: 'Invalid URL' }) }
     const entry = { time: Date.now(), method: req.method, path: url.pathname, agent: agentNameOf(req.headers['x-agent-name']), status: 0, ms: 0 }
-    // L2: the MCP client sends this name when DSH_AGENT_NAME is unset, and the
-    // operator needs to see that some client is unnamed.
-    if (entry.agent === 'mcp-agent') defaultAgentSeen = true
     res.on('finish', () => {
       entry.status = res.statusCode
       entry.ms = Date.now() - entry.time
@@ -415,6 +418,10 @@ export function apply(ctx, config = {}) {
         entry.agent = null
         return send(res, 401, { error: 'unauthorized' })
       }
+      // L2: the MCP client sends this name when DSH_AGENT_NAME is unset, and the
+      // operator needs to see that some client is unnamed. Counted only after
+      // auth, so an unauthenticated caller cannot set it.
+      if (entry.agent === 'mcp-agent') defaultAgentSeen = true
       // Browser pages use DSH's authenticated UI route, never this control API.
       if (req.headers.origin) return send(res, 403, { error: 'Browser origins are not allowed' })
       if (url.pathname === '/events') { lastSeen.sse = Date.now(); res.__since = Date.now() }
@@ -519,8 +526,26 @@ export function apply(ctx, config = {}) {
   // X2: a failed listen used to leave the previous state file in place, so the
   // MCP client sent its bearer token to whatever owned the port. Write a stale
   // marker without the token instead; the token keeps its own private file.
+  // F1: when the state file belongs to another bridge process that is still
+  // alive on this port, that bridge owns the port: leave its file alone.
+  const healthyOwner = () => {
+    let current
+    try { current = JSON.parse(readFileSync(stateFile, 'utf8')) } catch { return undefined }
+    if (!current || current.stale || typeof current.url !== 'string') return undefined
+    let currentPort
+    try { currentPort = Number(new URL(current.url).port) } catch { return undefined }
+    // Another bridge instance: a different boot, in a process that still runs.
+    if (currentPort !== port || current.bootId === bootId || !Number.isInteger(current.pid)) return undefined
+    try { process.kill(current.pid, 0) } catch (error) { if (error?.code !== 'EPERM') return undefined }
+    return current
+  }
   server.on('error', (error) => {
     ctx.logger?.error?.(`agent-bridge: cannot listen on 127.0.0.1:${port}: ${error?.code ?? error?.message ?? error}`)
+    const owner = healthyOwner()
+    if (owner) {
+      ctx.logger?.warn?.(`agent-bridge: port ${port} belongs to the bridge in process ${owner.pid}; its state file is left as is`)
+      return
+    }
     try {
       mkdirSync(dirname(stateFile), { recursive: true })
       writeFileSync(stateFile, JSON.stringify({
@@ -539,7 +564,10 @@ export function apply(ctx, config = {}) {
     mkdirSync(dirname(stateFile), { recursive: true })
     writeFileSync(tokenFile, `${token}\n`, { mode: 0o600 })
     if (process.platform !== 'win32') chmodSync(tokenFile, 0o600)
-    writeFileSync(stateFile, JSON.stringify({ url: `http://127.0.0.1:${port}`, protocol: PROTOCOL, version, bootId, startedAt, pid: process.pid }, null, 2), { mode: 0o600 })
+    // F2: 0.6.1 MCP clients read `token` from this file, and a running client
+    // keeps its old code after an upgrade. Keep a deprecated copy for 0.6.x;
+    // protocol 2 (0.7.0) removes it. A stale marker never carries it.
+    writeFileSync(stateFile, JSON.stringify({ url: `http://127.0.0.1:${port}`, token, tokenDeprecated: true, protocol: PROTOCOL, version, bootId, startedAt, pid: process.pid }, null, 2), { mode: 0o600 })
     if (process.platform !== 'win32') chmodSync(stateFile, 0o600)
     ctx.logger?.info?.(`agent-bridge: listening on 127.0.0.1:${port}`)
   })

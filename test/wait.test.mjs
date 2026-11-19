@@ -75,7 +75,8 @@ test('a wait right after a send returns the new turn, not the previous one', asy
   assert.ok(waited.turnEndEventId > sent.eventId, 'the wait must report the turn-end it observed')
 })
 
-test('a wait without a cursor still reports idle and bounded output', async (t) => {  const { bridge } = await startFake()
+test('a wait without a cursor still reports idle and bounded output', async (t) => {
+  const { bridge } = await startFake()
   t.after(() => bridge.stop())
   const mcp = startMcp({ env: { DSH_BRIDGE_STATE_FILE: bridge.file } })
   t.after(() => mcp.stop())

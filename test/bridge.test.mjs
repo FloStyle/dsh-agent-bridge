@@ -88,5 +88,3 @@ test('local control API enforces auth, validates input and keeps status metadata
   writeFileSync(file, JSON.stringify({ url: 'https://example.invalid', token: randomBytes(24).toString('hex') }))
   assert.throws(() => bridge(), /127\.0\.0\.1/)
 })
-
-

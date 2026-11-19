@@ -113,7 +113,7 @@ const tools = [
             // The turn is waiting for a human: return instead of blocking until
             // the timeout. Never answers the request.
             const state = await read()
-            return { ...state, pendingInput: event.kinds, pendingInputEventId: event.id }
+            return { ...state, pendingKinds: event.kinds, pendingInputEventId: event.id }
           }
           if (event.type === 'turn-end' || event.type === 'error') {
             const state = await read()
@@ -122,6 +122,7 @@ const tools = [
               turnEndEventId: event.id,
               ...(event.type === 'turn-end' ? { reason: event.reason } : {}),
               ...(event.type === 'turn-end' && event.reason === 'cancelled' ? { cancelled: true } : {}),
+              ...(event.type === 'turn-end' && event.reason === 'incomplete' ? { incomplete: true } : {}),
               ...(event.type === 'error' ? { error: event.message } : {}),
             }
           }
@@ -173,4 +174,3 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
     out({ jsonrpc: '2.0', id, error: { code: -32603, message: String(e.message ?? e) } })
   }
 })
-

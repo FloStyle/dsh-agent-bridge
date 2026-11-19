@@ -85,7 +85,8 @@ test('the token file keeps the token stable across a clash', async (t) => {
   const second = await startBridge({ stateFile })
   t.after(() => second.stop().catch(() => {}))
   assert.equal(second.token, token, 'the same token comes back after the clash clears')
-  assert.equal('token' in JSON.parse(readFileSync(stateFile, 'utf8')), false)
+  // F2: a listening bridge keeps a deprecated copy for 0.6.x clients.
+  assert.equal(JSON.parse(readFileSync(stateFile, 'utf8')).token, token)
 })
 
 test('an existing state-file token is adopted, not rotated', async (t) => {
@@ -99,7 +100,10 @@ test('an existing state-file token is adopted, not rotated', async (t) => {
   t.after(() => bridge.stop())
   assert.equal(bridge.token, legacy, '0.6.2 must keep the token a 0.6.1 state file holds')
   assert.equal(readFileSync(join(folder, 'agent-bridge.token'), 'utf8').trim(), legacy)
-  assert.equal('token' in JSON.parse(readFileSync(stateFile, 'utf8')), false, 'the state file is cleaned of the token')
+  // F2: the adopted token is also kept as a deprecated copy for 0.6.x clients.
+  const listening = JSON.parse(readFileSync(stateFile, 'utf8'))
+  assert.equal(listening.token, legacy)
+  assert.equal(listening.tokenDeprecated, true)
 })
 
 test('doctor fails on a stale state file', async (t) => {
