@@ -7,6 +7,7 @@ import { createServer } from 'node:net'
 import { once } from 'node:events'
 import { randomBytes } from 'node:crypto'
 import { apply } from '../index.js'
+import { readBridgeToken } from './helpers.mjs'
 import { bridge } from '../mcp/lib.mjs'
 
 test('local control API enforces auth, validates input and keeps status metadata private', async t => {
@@ -49,7 +50,9 @@ test('local control API enforces auth, validates input and keeps status metadata
     rmSync(folder, { recursive: true, force: true })
   })
   await once(server, 'listening')
-  const { url, token } = JSON.parse(readFileSync(file, 'utf8'))
+  const stateFileJson = JSON.parse(readFileSync(file, 'utf8'))
+  const { url } = stateFileJson
+  const token = readBridgeToken(file, stateFileJson)
   assert.equal(server.address().address, '127.0.0.1')
   assert.ok(token.length >= 32)
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }

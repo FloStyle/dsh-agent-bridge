@@ -1,7 +1,7 @@
 // Shared client for the dsh-agent-bridge plugin running inside DeepSeek Harness.
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 export function bridge() {
   const file = process.env.DSH_BRIDGE_STATE_FILE || join(homedir(), '.dsh', 'agent-bridge.json')
@@ -9,10 +9,18 @@ export function bridge() {
   try { state = JSON.parse(readFileSync(file, 'utf8')) } catch {
     throw new Error(`DSH bridge not found (${file}). Is DeepSeek Harness running with the dsh-agent-bridge plugin?`)
   }
+  // X2: a stale marker means this port has no bridge. Never send the token to
+  // whatever else may own it.
+  if (state.stale) throw new Error('bridge is not listening (port in use); restart DSH or change the port')
   const endpoint = new URL(state.url)
   if (endpoint.protocol !== 'http:' || endpoint.hostname !== '127.0.0.1' || endpoint.username || endpoint.password || endpoint.pathname !== '/' || endpoint.search || endpoint.hash) throw new Error('Bridge URL must be plain HTTP on 127.0.0.1')
-  if (typeof state.token !== 'string' || state.token.length < 32) throw new Error('Invalid bridge token')
-  return state
+  // 0.6.2 keeps the token in a private sibling file; older state files had it inline.
+  let token = state.token
+  if (typeof token !== 'string' || token.length < 32) {
+    try { token = readFileSync(join(dirname(file), 'agent-bridge.token'), 'utf8').trim() } catch { token = undefined }
+  }
+  if (typeof token !== 'string' || token.length < 32) throw new Error('Invalid bridge token')
+  return { ...state, token }
 }
 
 export async function call(method, path, body) {
@@ -37,7 +45,14 @@ export async function* events({ since, signal } = {}) {
   const { url, token } = bridge()
   const q = since === undefined ? '' : `?since=${since}`
   const res = await fetch(`${url}/events${q}`, { headers: { authorization: `Bearer ${token}` }, signal, redirect: 'error' })
-  if (!res.ok) throw new Error(`DSH bridge ${res.status}`)
+  if (!res.ok) {
+    let detail = ''
+    try { const body = await res.json(); if (body?.error) detail = `: ${body.error}` } catch { /* not JSON */ }
+    const error = new Error(`DSH bridge ${res.status}${detail}`)
+    // A status means the server answered: retrying cannot fix a 4xx.
+    error.status = res.status
+    throw error
+  }
   const decoder = new TextDecoder()
   let buf = ''
   for await (const chunk of res.body) {
@@ -78,6 +93,9 @@ export async function* follow({ since, signal, retryMs = 1000 } = {}) {
       }
     } catch (error) {
       if (signal?.aborted) return
+      // Retry only network errors. A 4xx is permanent: bad token, too many
+      // streams or a protocol mismatch must reach the caller by name.
+      if (typeof error?.status === 'number' && error.status >= 400 && error.status < 500) throw error
     }
     if (signal?.aborted) return
     await new Promise((resolve) => setTimeout(resolve, retryMs))

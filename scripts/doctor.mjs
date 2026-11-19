@@ -6,8 +6,9 @@
 // It never prints the token and never changes anything.
 import { readFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { parseDeniedPlugins, deniedPluginHint } from './plugin-list.mjs'
 
 const args = process.argv.slice(2)
 const argValue = (name, fallback) => {
@@ -45,7 +46,7 @@ let installedVersion
 if (existsSync(installedManifest)) {
   installedVersion = JSON.parse(readFileSync(installedManifest, 'utf8')).version
 } else {
-  bad(`plugin in profile '${profile}'`, 'not installed', `dsh plugin --profile ${profile} add github:FloStyle/dsh-agent-bridge#v0.6.1`)
+  bad(`plugin in profile '${profile}'`, 'not installed', `dsh plugin --profile ${profile} add github:FloStyle/dsh-agent-bridge#v0.6.2`)
 }
 
 const repoVersion = (() => {
@@ -66,13 +67,29 @@ if (installedVersion && repoVersion) {
   ok('plugin version', installedVersion)
 }
 
+// ---- 2b. plugins DSH refuses for this runtime ----------------------------------------------------
+// DSH keeps no refusal record; the warning from `dsh plugin <profile> list` is
+// the only observable source (see scripts/plugin-list.mjs).
+try {
+  const list = spawnSync(`dsh plugin --profile ${profile} list`, { encoding: 'utf8', shell: true, timeout: 60000 })
+  for (const plugin of parseDeniedPlugins(`${list.stdout ?? ''}${list.stderr ?? ''}`)) {
+    warn('plugin refused', `${plugin.name}@${plugin.version} is incompatible with dsh ${plugin.runtime}`, deniedPluginHint(profile, plugin))
+  }
+} catch { /* the list check is advisory: never fail doctor on it */ }
+
 // ---- 3. state file and /health -------------------------------------------------------------------
 if (!existsSync(stateFile)) {
   bad('state file', `missing at ${stateFile}`, 'start DeepSeek Harness with the bridge plugin loaded; DSH writes this file')
 } else {
   let state
   try { state = JSON.parse(readFileSync(stateFile, 'utf8')) } catch { state = undefined }
-  if (!state?.url || !state?.token) {
+  const inlineToken = typeof state?.token === 'string' && state.token.length >= 32 ? state.token : undefined
+  let fileToken
+  try { fileToken = readFileSync(join(dirname(stateFile), 'agent-bridge.token'), 'utf8').trim() } catch { fileToken = undefined }
+  const token = inlineToken ?? (fileToken?.length >= 32 ? fileToken : undefined)
+  if (state?.stale) {
+    bad('state file', `stale: ${state.error ?? 'the bridge is not listening'}`, `another process owns the port; stop it, or change \`port\` in cordis.patch.yml and restart DSH`)
+  } else if (!state?.url || !token) {
     bad('state file', `${stateFile} is not valid bridge state`, 'stop DSH, remove the file and restart to regenerate it')
   } else {
     const url = new URL(state.url)
@@ -83,7 +100,7 @@ if (!existsSync(stateFile)) {
       let health
       try {
         const response = await fetch(`${url.origin}/health`, {
-          headers: { authorization: `Bearer ${state.token}` },
+          headers: { authorization: `Bearer ${token}` },
           redirect: 'error',
           signal: AbortSignal.timeout(10000),
         })
@@ -115,6 +132,11 @@ if (!existsSync(stateFile)) {
         } else {
           ok('injected services', `${health.services.checked} checked, none missing`)
         }
+        if (health.defaultAgentSeen === true) {
+          warn('sender name', 'a client used the default name "mcp-agent"', 'set DSH_AGENT_NAME in that MCP client config, for example DSH_AGENT_NAME=claude-code')
+        } else if (health.defaultAgentSeen === false) {
+          ok('sender name', 'no unnamed client seen')
+        }
       }
     }
   }
@@ -123,7 +145,7 @@ if (!existsSync(stateFile)) {
 // ---- 4. MCP client entry -------------------------------------------------------------------------
 const mcpEntry = join(profileDir, 'node_modules', packageName, 'mcp', 'mcp.mjs')
 if (existsSync(mcpEntry)) ok('MCP client entry', mcpEntry)
-else bad('MCP client entry', `missing at ${mcpEntry}`, `dsh plugin --profile ${profile} add github:FloStyle/dsh-agent-bridge#v0.6.1`)
+else bad('MCP client entry', `missing at ${mcpEntry}`, `dsh plugin --profile ${profile} add github:FloStyle/dsh-agent-bridge#v0.6.2`)
 
 console.log('')
 if (failures) {
@@ -131,4 +153,5 @@ if (failures) {
   process.exit(1)
 }
 console.log(`all checks passed${warnings ? ` with ${warnings} warning(s)` : ''}`)
+
 

@@ -23,7 +23,7 @@ export async function freePort() {
  * other context members. Every bridge writes its state file, so pass the same
  * `stateFile` to simulate one process restarting on the same port.
  */
-export async function startBridge({ port, stateFile, controller = {}, context = {}, config = {}, keepStateEnv = false } = {}) {
+export async function startBridge({ port, stateFile, controller = {}, context = {}, config = {}, keepStateEnv = false, allowListenError = false } = {}) {
   const folder = stateFile ? undefined : mkdtempSync(join(tmpdir(), 'dsh-bridge-test-'))
   const file = stateFile ?? join(folder, 'state.json')
   const realState = join(homedir(), '.dsh', 'agent-bridge.json')
@@ -77,13 +77,18 @@ export async function startBridge({ port, stateFile, controller = {}, context = 
       else process.env.DSH_BRIDGE_STATE_FILE = previous
     }
   }
-  await once(server, 'listening')
+  await once(server, 'listening').catch((error) => { if (!allowListenError) throw error })
+  if (allowListenError) await new Promise((resolve) => setTimeout(resolve, 250))
   const state = JSON.parse(readFileSync(file, 'utf8'))
-  const headers = { authorization: `Bearer ${state.token}`, 'content-type': 'application/json' }
+  const token = readBridgeToken(file, state)
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }
   const get = (path, init) => fetch(state.url + path, { ...init, headers: { ...headers, ...init?.headers } })
   const post = (path, body) => get(path, { method: 'POST', body: JSON.stringify(body) })
   const emit = (event, ...args) => handlers.get(event)?.(...args)
+  let stopped = false
   const stop = async () => {
+    if (stopped) return
+    stopped = true
     for (const dispose of disposers.reverse()) dispose()
     // The plugin ends its SSE responses first; only force-close if a socket lingers.
     const closed = new Promise((resolve) => server.close(() => resolve()))
@@ -93,9 +98,18 @@ export async function startBridge({ port, stateFile, controller = {}, context = 
     if (folder) rmSync(folder, { recursive: true, force: true })
   }
   return {
-    server, port: listenPort, folder, file, state, url: state.url, token: state.token,
+    server, port: listenPort, folder, file, state, url: state.url, token,
     headers, get, post, emit, handlers, routes, ctx, stop,
   }
+}
+
+/**
+ * The bridge keeps its token in a private sibling file (0.6.2+). Older builds
+ * wrote it into the state file, which 0.6.2 still reads for migration.
+ */
+export function readBridgeToken(stateFile, state) {
+  if (typeof state?.token === 'string') return state.token
+  try { return readFileSync(join(dirname(stateFile), 'agent-bridge.token'), 'utf8').trim() } catch { return '' }
 }
 
 /**

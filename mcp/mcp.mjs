@@ -11,6 +11,11 @@ const MAX_PROMPT = 50000
 const MAX_TIMEOUT_SEC = 3600
 const MAX_LIMIT = 1000
 
+// L2: without this name every agent looks the same in the transcript and audit.
+if (!process.env.DSH_AGENT_NAME) {
+  process.stderr.write('dsh-agent-bridge: DSH_AGENT_NAME is not set; this client will appear as "mcp-agent". Set DSH_AGENT_NAME so transcripts and the audit log name the sender.\n')
+}
+
 /** Accept a full id ("session-3a9e…"), the bare uuid, or any unique prefix ("3a9e7ffb"). */
 async function resolveId(id) {
   if (!id) return id
@@ -69,7 +74,7 @@ const tools = [
   },
   {
     name: 'dsh_wait',
-    description: 'Wait for a DSH turn to end, then return its transcript. Pass the eventId from dsh_send as `since` (and its bootId) to wait for exactly that turn; without a cursor it waits until the session looks idle. Times out after timeoutSec (default 300).',
+    description: 'Wait for a DSH turn to end, then return its transcript. Stops early when the session starts waiting for a human (pending input) or when the turn was cancelled; it never answers the request. Pass the eventId from dsh_send as `since` (and its bootId) to wait for exactly that turn; without a cursor it waits until the session looks idle. Times out after timeoutSec (default 300).',
     annotations: readOnly('Wait for a DSH turn'),
     inputSchema: {
       type: 'object',
@@ -104,9 +109,22 @@ const tools = [
         for await (const event of follow({ since, signal: controller.signal, retryMs: 250 })) {
           if (bootId && event.bootId && event.bootId !== bootId) return { sessionId, timedOut: true, bootChanged: event.bootId }
           if (event.sessionId !== sessionId) continue
+          if (event.type === 'pending-input' && Array.isArray(event.kinds) && event.kinds.length) {
+            // The turn is waiting for a human: return instead of blocking until
+            // the timeout. Never answers the request.
+            const state = await read()
+            return { ...state, pendingKinds: event.kinds, pendingInputEventId: event.id }
+          }
           if (event.type === 'turn-end' || event.type === 'error') {
             const state = await read()
-            return { ...state, turnEndEventId: event.id, ...(event.type === 'error' ? { error: event.message } : {}) }
+            return {
+              ...state,
+              turnEndEventId: event.id,
+              ...(event.type === 'turn-end' ? { reason: event.reason } : {}),
+              ...(event.type === 'turn-end' && event.reason === 'cancelled' ? { cancelled: true } : {}),
+              ...(event.type === 'turn-end' && event.reason === 'incomplete' ? { incomplete: true } : {}),
+              ...(event.type === 'error' ? { error: event.message } : {}),
+            }
           }
         }
       } finally {

@@ -24,6 +24,7 @@
 .EXAMPLE
   ./scripts/install.ps1 -Source local -Profile bridge-test
 #>
+#Requires -Version 5.1
 [CmdletBinding()]
 param(
   [ValidateSet('release', 'github', 'local')]
@@ -126,7 +127,7 @@ if (Test-Path $manifestPath) {
 
 Write-Host ''
 Write-Host "Installed $packageName $Version into profile '$Profile'"
-Write-Host "  installed version: $($installed ?? 'not found')"
+Write-Host "  installed version: $(if ($installed) { $installed } else { 'not found' })"
 Write-Host "  dsh.profile.bundles: $bundleState"
 Write-Host ''
 Write-Host 'Restart DeepSeek Harness while no session is working, then check:'

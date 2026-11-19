@@ -62,6 +62,18 @@ function loadToken(file) {
   try { return JSON.parse(readFileSync(file, 'utf8')).token } catch { return undefined }
 }
 
+/** The token lives in a private sibling file, never in the state file (X2). */
+function tokenPathOf(stateFile) {
+  return join(dirname(stateFile), 'agent-bridge.token')
+}
+
+function loadTokenFile(file) {
+  try {
+    const token = readFileSync(file, 'utf8').trim()
+    return token.length >= 32 ? token : undefined
+  } catch { return undefined }
+}
+
 function textOf(content, kinds = ['text']) {
   if (!Array.isArray(content)) return typeof content === 'string' ? content : ''
   return content.filter((p) => kinds.includes(p?.type)).map((p) => p.text ?? '').join('\n').trim()
@@ -72,15 +84,32 @@ function clip(s, n) {
   return s.length > n ? s.slice(0, n) + `\u2026 [+${s.length - n} chars]` : s
 }
 
-function lastAssistantText(events) {
+/**
+ * Assistant text of one turn only. A cancelled turn has none, so it must not
+ * inherit the previous turn's answer (L1).
+ */
+function lastAssistantText(events, turn) {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]
-    if (e?.type === 'assistant/message') {
-      const t = textOf(e.data?.message?.content)
-      if (t) return t
-    }
+    if (e?.type !== 'assistant/message') continue
+    if (turn !== undefined && e.data?.turn !== turn) continue
+    const t = textOf(e.data?.message?.content)
+    if (t) return t
   }
-  return ''
+  return null
+}
+
+/**
+ * DSH TurnEndReason kinds to the values clients act on. DSH 0.2.2-rc.3 defines
+ * completed, aborted, interrupted, error, max-tokens, blocked and forked. Only
+ * `completed` means the turn finished; everything else that is not a cancel
+ * or an error, including kinds a later DSH adds, is `incomplete`.
+ */
+function turnEndReason(kind) {
+  if (kind === 'completed') return 'completed'
+  if (kind === 'aborted' || kind === 'interrupted') return 'cancelled'
+  if (kind === 'error') return 'error'
+  return 'incomplete'
 }
 
 /**
@@ -133,7 +162,10 @@ export function apply(ctx, config = {}) {
   const port = Number(config.port ?? 7788)
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid bridge port')
   const stateFile = process.env.DSH_BRIDGE_STATE_FILE || join(homedir(), '.dsh', 'agent-bridge.json')
-  const savedToken = config.token ?? loadToken(stateFile)
+  const tokenFile = tokenPathOf(stateFile)
+  // Order: configured token, the 0.6.2 token file, then a 0.6.1 state file that
+  // still carries the token (adopted, not rotated, so existing clients survive).
+  const savedToken = config.token ?? loadTokenFile(tokenFile) ?? loadToken(stateFile)
   const token = typeof savedToken === 'string' && savedToken.length >= 32 ? savedToken : randomBytes(24).toString('hex')
   const tokenBytes = Buffer.from(token, 'utf8')
   /** Compare without leaking the matched prefix length. */
@@ -204,7 +236,14 @@ export function apply(ctx, config = {}) {
   ctx.on('session/event', (session, event) => {
     try {
       if (event.type === 'turn/end') {
-        emit({ type: 'turn-end', sessionId: session.id, title: titleOf(session), cwd: session.header?.cwd, reason: event.data?.reason?.kind, lastText: clip(lastAssistantText(session.snapshotEvents?.() ?? []), 4000) })
+        const turn = event.data?.turn
+        const reasonKind = event.data?.reason?.kind
+        const text = lastAssistantText(session.snapshotEvents?.() ?? [], turn)
+        emit({
+          type: 'turn-end', sessionId: session.id, title: titleOf(session), cwd: session.header?.cwd,
+          turn, reason: turnEndReason(reasonKind), reasonKind,
+          lastText: text === null ? null : clip(text, 4000),
+        })
       } else if (event.type === 'user/message' && event.data?.source?.kind === 'user') {
         emit({ type: 'user-message', sessionId: session.id, source: event.data?.source?.kind, text: clip(textOf(event.data?.content), 500) })
       }
@@ -319,6 +358,7 @@ export function apply(ctx, config = {}) {
   const startedAt = Date.now()
   const requests = []
   const counters = { total: 0, errors: 0, prompts: 0, creates: 0, reads: 0, unauthorized: 0 }
+  let defaultAgentSeen = false
   const lastSeen = { request: 0, sse: 0 }
   const track = (entry) => {
     requests.push(entry)
@@ -370,7 +410,18 @@ export function apply(ctx, config = {}) {
     })
     if (url.pathname !== '/events') { counters.total++; lastSeen.request = entry.time; track(entry) }
     try {
-      if (!authorized(req.headers.authorization)) { counters.unauthorized++; return send(res, 401, { error: 'unauthorized' }) }
+      if (!authorized(req.headers.authorization)) {
+        counters.unauthorized++
+        // X4: an unauthenticated caller must not choose the name shown to the
+        // operator, and the request log must say what happened.
+        entry.kind = 'unauthorized'
+        entry.agent = null
+        return send(res, 401, { error: 'unauthorized' })
+      }
+      // L2: the MCP client sends this name when DSH_AGENT_NAME is unset, and the
+      // operator needs to see that some client is unnamed. Counted only after
+      // auth, so an unauthenticated caller cannot set it.
+      if (entry.agent === 'mcp-agent') defaultAgentSeen = true
       // Browser pages use DSH's authenticated UI route, never this control API.
       if (req.headers.origin) return send(res, 403, { error: 'Browser origins are not allowed' })
       if (url.pathname === '/events') { lastSeen.sse = Date.now(); res.__since = Date.now() }
@@ -386,6 +437,7 @@ export function apply(ctx, config = {}) {
         return send(res, 200, {
           ok: true, version, protocol: PROTOCOL, bootId, startedAt, pid: process.pid, clients: clients.size, lastEventId: seq,
           services: { checked: inject.length, missing: missingServices },
+          defaultAgentSeen,
         })
       }
 
@@ -453,9 +505,15 @@ export function apply(ctx, config = {}) {
           return send(res, 200, await prompt(parts[1], body.text, body.mode, entry.agent))
         }
         if (req.method === 'POST' && parts.length === 3 && parts[2] === 'cancel') {
-          const value = (await sc.cancel({ sessionId: parts[1] })) ?? { cancelled: true }
-          audit({ action: 'cancel', outcome: 'accepted', status: 200, agent: entry.agent, sessionId: parts[1] })
-          return send(res, 200, value)
+          try {
+            const value = (await sc.cancel({ sessionId: parts[1] })) ?? { cancelled: true }
+            audit({ action: 'cancel', outcome: 'accepted', status: 200, agent: entry.agent, sessionId: parts[1] })
+            return send(res, 200, value)
+          } catch (error) {
+            // T6: SECURITY.md promises that failed actions are recorded too.
+            audit({ action: 'cancel', outcome: 'failed', status: error?.status ?? 500, agent: entry.agent, sessionId: parts[1], error: String(error?.message ?? error) })
+            throw error
+          }
         }
       }
       send(res, 404, { error: 'not found' })
@@ -465,12 +523,51 @@ export function apply(ctx, config = {}) {
     }
   })
 
-  server.on('error', (error) => ctx.logger?.error?.(`agent-bridge: server error: ${error}`))
+  // X2: a failed listen used to leave the previous state file in place, so the
+  // MCP client sent its bearer token to whatever owned the port. Write a stale
+  // marker without the token instead; the token keeps its own private file.
+  // F1: when the state file belongs to another bridge process that is still
+  // alive on this port, that bridge owns the port: leave its file alone.
+  const healthyOwner = () => {
+    let current
+    try { current = JSON.parse(readFileSync(stateFile, 'utf8')) } catch { return undefined }
+    if (!current || current.stale || typeof current.url !== 'string') return undefined
+    let currentPort
+    try { currentPort = Number(new URL(current.url).port) } catch { return undefined }
+    // Another bridge instance: a different boot, in a process that still runs.
+    if (currentPort !== port || current.bootId === bootId || !Number.isInteger(current.pid)) return undefined
+    try { process.kill(current.pid, 0) } catch (error) { if (error?.code !== 'EPERM') return undefined }
+    return current
+  }
+  server.on('error', (error) => {
+    ctx.logger?.error?.(`agent-bridge: cannot listen on 127.0.0.1:${port}: ${error?.code ?? error?.message ?? error}`)
+    const owner = healthyOwner()
+    if (owner) {
+      ctx.logger?.warn?.(`agent-bridge: port ${port} belongs to the bridge in process ${owner.pid}; its state file is left as is`)
+      return
+    }
+    try {
+      mkdirSync(dirname(stateFile), { recursive: true })
+      writeFileSync(stateFile, JSON.stringify({
+        stale: true,
+        error: `cannot listen on 127.0.0.1:${port}: ${error?.code ?? error?.message ?? 'listen failed'}`,
+        protocol: PROTOCOL, version, bootId,
+      }, null, 2), { mode: 0o600 })
+      if (process.platform !== 'win32') chmodSync(stateFile, 0o600)
+    } catch (writeError) {
+      ctx.logger?.warn?.(`agent-bridge: could not write the stale state file: ${writeError}`)
+    }
+  })
   server.requestTimeout = 15000
   server.headersTimeout = 10000
   server.listen(port, '127.0.0.1', () => {
     mkdirSync(dirname(stateFile), { recursive: true })
-    writeFileSync(stateFile, JSON.stringify({ url: `http://127.0.0.1:${port}`, token, protocol: PROTOCOL, version, bootId, startedAt, pid: process.pid }, null, 2), { mode: 0o600 })
+    writeFileSync(tokenFile, `${token}\n`, { mode: 0o600 })
+    if (process.platform !== 'win32') chmodSync(tokenFile, 0o600)
+    // F2: 0.6.1 MCP clients read `token` from this file, and a running client
+    // keeps its old code after an upgrade. Keep a deprecated copy for 0.6.x;
+    // protocol 2 (0.7.0) removes it. A stale marker never carries it.
+    writeFileSync(stateFile, JSON.stringify({ url: `http://127.0.0.1:${port}`, token, tokenDeprecated: true, protocol: PROTOCOL, version, bootId, startedAt, pid: process.pid }, null, 2), { mode: 0o600 })
     if (process.platform !== 'win32') chmodSync(stateFile, 0o600)
     ctx.logger?.info?.(`agent-bridge: listening on 127.0.0.1:${port}`)
   })
