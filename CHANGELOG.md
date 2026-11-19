@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased (0.7.0-pre)
+
+- R3.1 `index.js` (645 lines) is split into `src/`: `auth.js` (token and state file), `audit.js`, `events.js` (SSE hub and DSH event relay), `pending.js`, `prompt.js` (prompts and model selection), `routes.js`, `http.js`, `status.js`, `transcript.js`, `workspaces.js`. `index.js` keeps only the wiring (100 lines). No behaviour change: every test passes unchanged.
+- R3.2 `src/dsh.js` is the only module that touches the DSH context.
+
 ## 0.6.4
 
 - Model selection. `GET /models` and the MCP tool `dsh_models` list DSH's model catalog (provider/model, reasoning efforts, default). `dsh_send` and `POST /sessions` take `model` and `reasoningEffort`; the model is selected before the first prompt, and an invalid choice creates nothing. `POST /sessions/:id/model` and `dsh_set_model` switch an existing session. Every switch is audited.
