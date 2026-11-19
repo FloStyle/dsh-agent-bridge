@@ -17,6 +17,7 @@ const HELP = `dsh-bridge ${VERSION}
   doctor      [--profile p]
   health
   profile     list|show|add|remove|validate [name] [--cwd d --root d... --preset p --description t] [--yes]
+  template    list|show|add|remove [name] [--profile p | --cwd d] [--model m] [--first-prompt t] [--yes]
   live-check  [--profile p] [--read-only]
   watch       [--session id] [--all]
   access-report [--session id|--workspace name] [--since 7d] [--json]
@@ -63,6 +64,9 @@ try {
       break
     case 'profile':
       process.exitCode = (await import('../src/cli/access-profiles.js')).profileCommand(options)
+      break
+    case 'template':
+      process.exitCode = (await import('../src/cli/templates.js')).templateCommand(options)
       break
     case 'live-check':
       process.exitCode = await (await import('../src/cli/live-check.js')).liveCheck(options)

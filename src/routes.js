@@ -6,9 +6,10 @@ import { readBody, send } from './http.js'
 import { flattenCatalog, resolveModel, sessionModel } from './models.js'
 import { validatePrompt } from './prompt.js'
 import { agentNameOf, clip, compact } from './transcript.js'
+import { createManager } from './manage.js'
 import { resolveWorkspace, wsInfo } from './workspaces.js'
 
-export function createHandler({ dsh, hub, status, authorized, audit, prompter, access, messenger, config, health, port }) {
+export function createHandler({ dsh, hub, status, authorized, audit, prompter, access, messenger, config, health, port, stateFile }) {
   // X3: only loopback names for this port; anything else is a rebinding or a mistake.
   const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`])
   const { counters, lastSeen } = status
@@ -22,6 +23,8 @@ export function createHandler({ dsh, hub, status, authorized, audit, prompter, a
     listCache = { at: Date.now(), value }
     return value
   }
+
+  const manager = createManager({ dsh, audit, stateFile, listSessions: (signal) => listSessions(signal) })
 
   /** Every event of a session, paging back with beforeSeq through at most `maxPages` pages. */
   const allEvents = async (sessionId, signal, maxPages = 50) => {
@@ -88,6 +91,7 @@ export function createHandler({ dsh, hub, status, authorized, audit, prompter, a
       if (req.method === 'GET' && url.pathname === '/models') return send(res, 200, flattenCatalog(await modelCatalog()))
       if (req.method === 'GET' && url.pathname === '/profiles') return send(res, 200, { items: access.list() })
       if (req.method === 'GET' && url.pathname === '/workspaces') return send(res, 200, { items: dsh.listWorkspaces().map(wsInfo) })
+      if (await manager.handle(req, res, { parts, entry, signal })) return
 
       if (parts[0] === 'sessions') {
         const sessionId = parts[1]
@@ -128,6 +132,15 @@ export function createHandler({ dsh, hub, status, authorized, audit, prompter, a
               throw error
             }
           }
+          // A template fills the fields the caller left out.
+          let agentPreset
+          if (body.template !== undefined) {
+            const template = manager.templateNamed(body.template)
+            for (const field of ['profile', 'cwd', 'model', 'reasoningEffort']) if (body[field] === undefined && template[field] !== undefined) body[field] = template[field]
+            agentPreset = template.agentPreset
+            if (template.firstPrompt) body.text = [template.firstPrompt, body.text].filter(Boolean).join('\n\n')
+            if (body.text !== undefined) validatePrompt(body.text, body.mode)
+          }
           // A profile fixes the cwd; an agent names the profile, never a path.
           const profile = body.profile !== undefined ? access.profileNamed(body.profile) : undefined
           if (profile) {
@@ -148,7 +161,7 @@ export function createHandler({ dsh, hub, status, authorized, audit, prompter, a
           const selection = wanted ? resolveModel(wanted.model, wanted.effort, await modelCatalog()) : undefined
           counters.creates++; entry.kind = 'create'; entry.text = clip(body.text, 200); entry.cwd = body.cwd
           const ws = await resolveWorkspace(dsh, body.workspace, body.cwd)
-          const created = await dsh.createSession(ws ? { workspaceId: ws.id } : body.cwd ? { cwd: body.cwd } : {})
+          const created = await dsh.createSession({ ...(ws ? { workspaceId: ws.id } : body.cwd ? { cwd: body.cwd } : {}), ...(agentPreset ? { agentPreset } : {}) })
           listCache = undefined
           entry.workspace = ws?.title
           entry.sessionId = created.sessionId

@@ -144,6 +144,10 @@ DSH, otherwise it cannot read the endpoint and token.
 | `dsh_set_model` | Switch the model of an existing session |
 | `bridge_ping` | Send a short message to another agent or into a DSH session |
 | `dsh_profiles` | List the owner's access profiles |
+| `dsh_templates` | List the owner's session templates |
+| `dsh_session_title`, `dsh_session_archive`, `dsh_session_pin` | Rename, archive or unarchive, pin or unpin a session |
+| `dsh_sessions_by_workspace` | List the sessions of one workspace |
+| `dsh_workspace_create`, `dsh_workspace_rename` | Create a workspace for a folder, rename a workspace |
 | `dsh_access` | Show a session's preset, profile and extra writable folders |
 | `dsh_apply_profile` | Apply an access profile to an existing session |
 | `dsh_wait` | Wait for a turn to end or for pending user input |
@@ -239,6 +243,25 @@ from another agent, not instructions from the user, and the delivered text says
 so. This is the in-memory version: messages are lost when DSH restarts. The
 Phase 3 mailbox will keep them.
 
+### Sessions, workspaces and templates
+
+Agents can rename, archive and unarchive (hide and show), pin and unpin
+sessions, list a workspace's sessions, and create or rename workspaces. Every
+change goes through DSH's own API and is audited. **Deleting a session or a
+workspace stays a human action in DSH**; the bridge has no delete. A session
+with running work is not archived.
+
+Templates are owner-written starting points (`~/.dsh/agent-bridge-templates.json`):
+a profile or a cwd, a model, an agent preset and a first prompt. A template
+fills only what the caller leaves out:
+
+```sh
+dsh-bridge template add review --profile engine --model deepseek-account/deepseek-v4-pro --first-prompt "Review the open PR." --yes
+```
+
+Then `dsh_send` with `template: "review"` starts that session; any `text` you
+pass comes after the template's first prompt.
+
 ### Delegating a turn
 
 `dsh_send` returns the cursor of the turn it started; hand both fields to
@@ -296,6 +319,11 @@ rejected; the UI uses DSH's own authenticated status route instead.
 | POST | `/sessions` | Create, optionally prompt: `{cwd?, workspace?, profile?, text?, mode?, model?, reasoningEffort?}`; returns `sessionId`, `model`, `requestId`, `eventId`, `bootId` |
 | POST | `/sessions/:id/model` | Switch the model: `{model, reasoningEffort?}`; returns `selected` |
 | GET | `/profiles` | The owner's access profiles |
+| GET | `/templates` | The owner's session templates |
+| POST | `/sessions/:id/title`, `/archive`, `/unarchive`, `/pin`, `/unpin` | Session management |
+| POST | `/workspaces` | Create a workspace for a folder: `{path, title?}` |
+| POST | `/workspaces/:id/title` | Rename a workspace |
+| GET | `/workspaces/:id/sessions` | The sessions of a workspace |
 | POST | `/sessions/:id/profile` | Apply a profile: `{profile}`; the session cwd must match |
 | GET | `/sessions/:id/access` | Preset, profile and registered folders of a session |
 | GET | `/models` | The DSH model catalog: `default`, `providers`, `models[]` with `ref`, `efforts` |

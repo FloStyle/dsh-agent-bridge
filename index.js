@@ -83,7 +83,7 @@ export function apply(ctx, config = {}) {
     services: { checked: inject.length, missing: missingServices },
     defaultAgentSeen: status.state.defaultAgentSeen,
   })
-  const server = createServer(createHandler({ dsh, hub, status, authorized: makeAuthorized(token), audit, prompter, access, messenger, config, health, port }))
+  const server = createServer(createHandler({ dsh, hub, status, authorized: makeAuthorized(token), audit, prompter, access, messenger, config, health, port, stateFile }))
 
   // X2/F1: a failed listen writes a stale marker without the token, unless the
   // state file belongs to another live bridge on this port.
