@@ -1,6 +1,6 @@
 # dsh-agent-bridge Phases 3–4: two-way messaging and wake-up
 
-Author: Claude Code (external reviewer), 2026-11-17. Executor: a DSH session in creator mode, in C:\Dev\DSHAgentBridge.
+2026-11-17. Executor: a DSH session in creator mode, in a clone of this repository.
 **Baseline:** v0.6.1 is installed and live-verified on DSH 0.2.2-rc.3. This plan replaces Phases 3 and 4 in docs/improvement-plan.md. Copy it into the repo as docs/phase-3-4-plan.md.
 
 ## Goal

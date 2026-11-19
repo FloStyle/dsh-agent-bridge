@@ -1,15 +1,15 @@
 # dsh-agent-bridge execution plan (recipe)
 
-Version 1, 2026-11-17. Author: Claude Code (bridge owner and reviewer).
-**Executor:** the DeepSeek (DSH) session `f1b3805c` in `C:\Dev\DSHAgentBridge`.
-**Reviewer:** Claude Code, the bridge owner session.
+Version 1, 2026-11-17.
+**Executor:** the implementing agent, working in a clone of this repository.
+**Reviewer:** the maintainer's review session.
 **Approver:** the owner (FloStyle). Only the owner merges, tags, installs into `desktop` and restarts DSH.
 
 Sources:
-- `AUDIT-2026-11-17.md`: finding IDs such as T2, X2 and S1 come from it.
-- `PHASE-3-4-PLAN.md`: item IDs such as P3.1 and P4.3 come from it.
+- `audit-2026-11-17.md`: finding IDs such as T2, X2 and S1 come from it.
+- `phase-3-4-plan.md`: item IDs such as P3.1 and P4.3 come from it.
 
-Both files are in the same folder as this one. This plan sets the order. Where it differs from `PHASE-3-4-PLAN.md`, this plan wins.
+Both files are in the same folder as this one. This plan sets the order. Where it differs from `phase-3-4-plan.md`, this plan wins.
 
 ---
 
@@ -20,7 +20,7 @@ Read these before you start. Read them again before each release.
 1. **One release, one branch, one PR.** The branch names are given below. Do not mix tasks from two releases in one PR.
 2. **Write the failing test first.** Commit it before the fix, in a separate commit whose message starts with `test:`. The reviewer checks the commit order.
 3. **CI must pass** on Windows and Ubuntu with Node 22 and 24 (`node --test`).
-4. **Test only on the `bridge-test` profile and on scratch sessions you create.** Never install into `desktop`. Never prompt, cancel or read real work sessions, in particular TurboMCP `65d391a4`.
+4. **Test only on the `bridge-test` profile and on scratch sessions you create.** Never install into `desktop`. Never prompt, cancel or read real work sessions.
 5. **Never print, log or commit the token.** Do not paste `~/.dsh/agent-bridge.json` into a report.
 6. **Do not merge, tag, release or install.** Open the PR, report, and wait.
 7. **Stop and report** when one of these happens:
@@ -36,12 +36,12 @@ Read these before you start. Read them again before each release.
 
 ### How a release flows
 
-```
+``
 executor: branch → failing tests → fixes → CI green → bridge-test live check → PR → report
 reviewer: review the PR against "Expected result" + "Review checks" → approve or request changes
 owner:    merge → tag → release → choose a quiet window with the TurboMCP session → install into desktop → restart DSH
 reviewer: run doctor + live check on desktop → close the release
-```
+``
 
 ---
 
@@ -49,13 +49,21 @@ reviewer: run doctor + live check on desktop → close the release
 
 | Release | Branch | Theme | Status |
 |---|---|---|---|
-| R1 · 0.6.2 | `fix-0.6.2` | Correct waits and small safety fixes | [ ] not started |
-| R2 · 0.6.3 | `cli-0.6.3` | All-in-one CLI, no Node or shell needed | [ ] not started |
-| R3 · 0.7.0-pre | `refactor-0.7` | Module split, DSH spikes, ping-lite | [ ] not started |
-| R4 · 0.7.0 | `phase-3-0.7.0` | Identity, mailbox, two-way messaging | [ ] not started |
-| R5 · 0.8.0 | `phase-4-0.8.0` | Wake-up adapters per harness | [ ] not started |
+Rows are in execution order. Releases WA, WB and WC are in `workspace-access-plan.md` (same folder).
 
-Do not start a release until the owner has merged the one before it.
+| # | Release | Branch | Theme | Status |
+|---|---|---|---|---|
+| 1 | R1 · 0.6.2 | `fix-0.6.2` | Correct waits and small safety fixes | [ ] in progress |
+| 2 | WA · measure | `access-measure` | Access spikes, access report script, layout guide | [ ] not started |
+| 3 | R2 · 0.6.3 | `cli-0.6.3` | All-in-one CLI, no Node or shell needed | [ ] not started |
+| 4 | R3.1–R3.2 | `refactor-0.7` | Module split and DSH adapter (no behaviour change) | [ ] not started |
+| 5 | WB · profiles | `access-profiles` | Access profiles, apply on create and restart, visibility | [ ] not started (gate: WA review) |
+| 6 | R3.3–R3.6 | `ping-lite-0.7` | DSH spikes, ping-lite, event-stream hardening | [ ] not started |
+| 7 | WC · manage | `access-manage` | Profile env, session and workspace management | [ ] not started |
+| 8 | R4 · 0.7.0 | `phase-3-0.7.0` | Identity, mailbox, two-way messaging | [ ] not started |
+| 9 | R5 · 0.8.0 | `phase-4-0.8.0` | Wake-up adapters per harness | [ ] not started |
+
+Do not start a release until the owner has merged the one before it. Version numbers after 0.6.3 are set when each release is tagged.
 
 ---
 
@@ -64,11 +72,11 @@ Do not start a release until the owner has merged the one before it.
 Branch `fix-0.6.2`, from `main`.
 
 ### R1.0 Put this plan in the repo
-- [x] **Steps:** Copy this file to `docs/execution-plan.md`. Copy `PHASE-3-4-PLAN.md` to `docs/phase-3-4-plan.md`. Copy `AUDIT-2026-11-17.md` to `docs/audit-2026-11-17.md`.
+- [ ] **Steps:** Copy this file to `docs/execution-plan.md`. Copy `phase-3-4-plan.md` to `docs/phase-3-4-plan.md`. Copy `audit-2026-11-17.md` to `docs/audit-2026-11-17.md`.
 - **Expected result:** the three files are in the PR with no content changes.
 
 ### R1.1 `turn-end` reports the right turn (L1, T1)
-- [x] **Steps:**
+- [ ] **Steps:**
   1. Test: a fake DSH runs turn 1, which ends with `pong-1`. Turn 2 is cancelled before any assistant text. Assert that the `turn-end` event for turn 2 has `reason: "cancelled"` and `lastText: null`.
   2. Test: a turn that ends with an error has `reason: "error"`.
   3. Fix: in `index.js`, build `lastText` only from `assistant/message` events whose `data.turn` equals the `turn` of the `turn/end` event. Map DSH's `reason.kind` to `completed`, `cancelled` or `error`, and keep the raw value in `reasonKind`.
@@ -77,7 +85,7 @@ Branch `fix-0.6.2`, from `main`.
 - **Evidence:** the test names, plus the `turn-end` event JSON from the live check.
 
 ### R1.2 `dsh_wait` stops on pending input (T2)
-- [x] **Steps:**
+- [ ] **Steps:**
   1. Test: after `dsh_send`, the fake DSH emits `pending-input` with `kinds: ["approval"]` for that session. `dsh_wait` with `since` returns within 2 s with `pendingInput: ["approval"]` and `timedOut` not set.
   2. Test: a `pending-input` event for another session does not end the wait.
   3. Test: a `pending-input` event with `kinds: []` does not end the wait.
@@ -85,7 +93,7 @@ Branch `fix-0.6.2`, from `main`.
 - **Expected result:** a wait never hangs on an approval or a question. The tool description says so.
 
 ### R1.3 `follow()` reports auth and protocol errors (T3)
-- [x] **Steps:**
+- [ ] **Steps:**
   1. Test: the bridge answers 401. `dsh_wait` with `since` fails within 2 s with an error that contains `401`, not `timedOut`.
   2. Test: a 429 response gives a clear error.
   3. Test: a dropped connection is still retried, as it is today.
@@ -93,7 +101,7 @@ Branch `fix-0.6.2`, from `main`.
 - **Expected result:** a wrong token is reported at once, by name.
 
 ### R1.4 Sender name always set (L2)
-- [x] **Steps:**
+- [ ] **Steps:**
   1. Make `scripts/connect-claude-code.*` and every config example in the README set `DSH_AGENT_NAME`. Check them with a test that scans the README.
   2. When `DSH_AGENT_NAME` is not set, the MCP server writes one warning line to stderr at start.
   3. `/health` gains `defaultAgentSeen: true` after a request arrives with the agent name `mcp-agent`. Add a test.
@@ -101,7 +109,7 @@ Branch `fix-0.6.2`, from `main`.
 - **Expected result:** a client without a name is visible in `doctor`, and no documented config omits it.
 
 ### R1.5 `doctor` lists plugins that DSH denies (L3)
-- [x] **Steps:**
+- [ ] **Steps:**
   1. Research: find where DSH 0.2.2-rc.3 records that it skipped `dsh-codex-subscription@3.2.6` for its version range. Check the output of `dsh plugin --profile bridge-test list`, the DSH log files and the profile state. Report the source (command or file, and the exact text).
   2. **Stop and report** if no stable source exists.
   3. Otherwise, `doctor` prints one WARN per denied plugin, with the hint `dsh plugin allow-version <name>@<version>`. First confirm in `dsh plugin --help` that this command exists, and use the real syntax.
@@ -109,7 +117,7 @@ Branch `fix-0.6.2`, from `main`.
 - **Expected result:** the WARN for `dsh-codex-subscription` appears when `doctor` runs against `desktop`. The reviewer runs that check; the executor shows the fixture test. `doctor` changes nothing.
 
 ### R1.6 No token leak after a port clash (X2)
-- [x] **Steps:**
+- [ ] **Steps:**
   1. Test: occupy the port, then start the bridge. Assert that the state file has no `token`, has `stale: true` and has an `error` string. The bridge logs an error.
   2. Test: the MCP client refuses a stale state file with the message `bridge is not listening (port in use); restart DSH or change the port`.
   3. Fix in `index.js`: handle `server.on('error')` before `listen`, and write the stale state file. Keep the saved token in memory and on the next successful listen, but do not write it to a state file that has no listener.
@@ -123,12 +131,12 @@ Branch `fix-0.6.2`, from `main`.
 - **Expected result:** with port 7788 taken, no request from the MCP client carries the token.
 
 ### R1.7 Smaller fixes (P1, T6, X4)
-- [x] **P1:** remove `??` from `scripts/install.ps1:129` and add `#Requires -Version 5.1`. **Expected result:** `powershell.exe -NoProfile -File scripts/install.ps1 -?` parses without errors.
-- [x] **T6:** audit a failed cancel as `outcome: "failed"`. Add a test.
-- [x] **X4:** log unauthenticated requests with `agent: null` and `kind: "unauthorized"`. Add a test.
+- [ ] **P1:** remove `??` from `scripts/install.ps1:129` and add `#Requires -Version 5.1`. **Expected result:** `powershell.exe -NoProfile -File scripts/install.ps1 -?` parses without errors.
+- [ ] **T6:** audit a failed cancel as `outcome: "failed"`. Add a test.
+- [ ] **X4:** log unauthenticated requests with `agent: null` and `kind: "unauthorized"`. Add a test.
 
 ### R1.8 Release preparation
-- [x] **Steps:** bump the version to 0.6.2 in both `package.json` files. Add a `CHANGELOG.md` entry with one line per task. Pack the release locally with `npm pack`. Install the tarball on `bridge-test` with `./scripts/install.ps1 -Source local -Profile bridge-test`.
+- [ ] **Steps:** bump the version to 0.6.2 in both `package.json` files. Add a `CHANGELOG.md` entry with one line per task. Pack the release locally with `npm pack`. Install the tarball on `bridge-test` with `./scripts/install.ps1 -Source local -Profile bridge-test`.
 - [ ] **Live check on `bridge-test`:** health, token, send then wait, cancel (R1.1), approval wait (R1.2, with a scratch prompt that asks for a tool approval), wrong token (R1.3), port clash (R1.6), audit lines.
 - **Expected result of R1:** CI green on the 4 jobs. All new tests named in the report. Every live check above shows PASS with its output.
 
@@ -214,12 +222,12 @@ Branch `refactor-0.7`. Three parts, in this order. **R3.1 and R3.2 are one PR wi
 ### R3.5 Ping-lite (in memory)
 Define the message shape once. Phase 3 must keep it.
 
-```json
+``json
 { "type": "message", "id": "msg-<uuid>", "threadId": "thr-<uuid>", "inReplyTo": null,
   "from": "<agent>", "to": "<agent>", "kind": "ping|review-request|review-result|question|done",
   "summary": "≤ 2000 chars", "ref": { "repo": "…", "branch": "…", "sha": "…", "pr": 0 },
   "hop": 1, "auto": false, "time": 0 }
-```
+``
 
 - [ ] `POST /ping` with `{to, kind, summary, ref?, threadId?, inReplyTo?}`. Validate the fields and the 2,000-character limit, emit the `message` event, and write an audit line (hash and length only). The `hop` value is the parent's hop plus 1; refuse when it is over 6. Add tests.
 - [ ] `watch --agent <name> --until message|turn-end|pending-input --exit` prints one JSON line for the first matching event and exits 0. Add a test.
@@ -227,7 +235,7 @@ Define the message shape once. Phase 3 must keep it.
 - [ ] MCP tool `bridge_ping` for external agents. `from` comes from `DSH_AGENT_NAME`; until Phase 3 it is only a label, and the tool description says so.
 - [ ] Documentation: "in-memory, lost on DSH restart, replaced by the mailbox in 0.7.0".
 - **Expected result, the round trip on `bridge-test`:**
-  1. The reviewer (Claude Code) runs `dsh-bridge watch --agent reviewer --until message --exit` in the background.
+  1. The reviewer runs `dsh-bridge watch --agent reviewer --until message --exit` in the background.
   2. A scratch DSH session calls `bridge_ping({to: "reviewer", kind: "review-request", summary, ref})`.
   3. The watcher exits within 2 s, and the reviewer wakes up.
   4. The reviewer answers with the MCP `bridge_ping({to: "dsh:<shortId>", kind: "review-result", inReplyTo})`, and the bridge prompts that DSH session (it is idle).
@@ -244,7 +252,7 @@ Define the message shape once. Phase 3 must keep it.
 
 ## R4 · 0.7.0: Phase 3
 
-Branch `phase-3-0.7.0`. Follow `PHASE-3-4-PLAN.md`, in this order: P3.1 → P3.2 → P3.3 → P3.6 → P3.7 → P3.4 → P3.5 → P3.8 → P3.9. The "Done when" column of that plan is the expected result. The changes below come from the audit.
+Branch `phase-3-0.7.0`. Follow `phase-3-4-plan.md`, in this order: P3.1 → P3.2 → P3.3 → P3.6 → P3.7 → P3.4 → P3.5 → P3.8 → P3.9. The "Done when" column of that plan is the expected result. The changes below come from the audit.
 
 - [ ] **R4.0 Threat model first (X1).** Before any code, update SECURITY.md. The token protects against other OS users and browsers. It does not protect against agents of the same user that have shell access. Scopes are for attribution and preventing accidents. **Expected result:** the reviewer approves the text before R4.1 starts.
 - [ ] **R4.1 = P3.1**, with these changes:
@@ -279,7 +287,7 @@ Branch `phase-4-0.8.0`. Order: P4.3 → P4.7 → P4.2 → P4.6 → P4.4 → P4.5
 
 Send this report through the bridge when a release PR is ready, and when you stop.
 
-```
+``
 Release: R<n> · <version> · branch <name> · PR <url>
 Status: ready for review | stopped (<stop condition>)
 
@@ -293,11 +301,11 @@ Commit order: test commit <sha> before fix commit <sha>, per task
 Not verified: <list, with reason>
 New findings (not fixed here): <list>
 Questions for the owner: <list or none>
-```
+``
 
 ---
 
-## 3. Review protocol (Claude Code)
+## 3. Review protocol
 
 For each release PR, the reviewer:
 
