@@ -34,11 +34,23 @@ Package managers and build tools write caches under your user profile by default
 
 A DSH plugin cannot set these variables per session; DSH accepts only `DSH_*` variables from plugins (`docs/spikes/shell-env.md`). Set them in the tool's config file or in your user environment.
 
-## 3. Grant extra folders for file edits only
+## 3. Use HTTPS clients that work in the sandbox
+
+On Windows, the sandbox breaks the Windows TLS stack (Schannel). `git` with its default settings, `curl.exe` and PowerShell's `Invoke-WebRequest` all fail with `SEC_E_NO_CREDENTIALS`. Node and Python HTTPS work, and so does Git with its OpenSSL backend. See `docs/spikes/https-in-sandbox.md`.
+
+| Need | Setting | Tested |
+|---|---|---|
+| `git` fetch, clone, `ls-remote` over HTTPS | `git config --global http.sslBackend openssl` | yes (`ls-remote` on a public repository) |
+| `git push`, private repositories | the same, plus Git Credential Manager | no |
+| Download a file | use Node or Python instead of `curl.exe` or `Invoke-WebRequest` | yes |
+
+With the OpenSSL backend, Git uses its own list of certificate authorities instead of the Windows certificate store. A company proxy or a private CA then needs `http.sslCAInfo`.
+
+## 4. Grant extra folders for file edits only
 
 When the session only needs to **edit files** in another folder (no shell command writes there), an extra writable root works. The bridge's access profiles will register them per session. Until then, the `additionalWritableRoots` config of `@deepseek-ai/dsh-sandbox-policy` grants folders to every session of a profile.
 
-## 4. When nothing above fits
+## 5. When nothing above fits
 
 Some work must write outside any single folder. Two options, safest first:
 

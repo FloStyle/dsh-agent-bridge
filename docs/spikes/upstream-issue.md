@@ -27,6 +27,10 @@ Real work writes outside the session cwd through shell tools: build tools writin
 
 `@deepseek-ai/dsh-sandbox-windows-acl` already accepts several folders: `new AclSandbox({ writableDirs: [...] })`. Passing the resolved roots of the call (configured plus registered) into `writableDirs` for confined `pwsh` and `bash` calls would close the gap. The standing ACL grant per folder could reuse the existing capability-SID cache.
 
+**Related: HTTPS fails in the same sandbox**
+
+In `workspace-write`, every Schannel client fails with `SEC_E_NO_CREDENTIALS`: `git` with default settings, `curl.exe`, `Invoke-WebRequest`. OpenSSL-based clients work (Node, Python, `git -c http.sslBackend=openssl`). The restricted token appears to block Schannel's credential acquisition. Details: `docs/spikes/https-in-sandbox.md`.
+
 **Workaround today**
 
 Choose a session cwd that contains every folder the session writes, and send caches to folders inside it.
