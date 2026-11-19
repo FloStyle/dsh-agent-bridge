@@ -139,3 +139,14 @@ test('MCP: dsh_models, dsh_send with a model, and dsh_set_model', async (t) => {
   const set = await withTimeout(mcp.callTool('dsh_set_model', { sessionId: 'session-old', model: 'openrouter/deepseek-pro' }), 10000, 'dsh_set_model')
   assert.deepEqual(set.selected, { provider: 'openrouter', model: 'deepseek-pro' })
 })
+
+test('config.defaultModel applies to sessions the bridge creates without a model', async (t) => {
+  const dsh = fakeDsh()
+  const bridge = await startBridge({ controller: dsh.controller, config: { defaultModel: 'deepseek-account/deepseek-pro', defaultReasoningEffort: 'high' } })
+  t.after(() => bridge.stop())
+  const body = await (await bridge.post('/sessions', { text: 'hello' })).json()
+  assert.deepEqual(body.model, { provider: 'deepseek-account', model: 'deepseek-pro', reasoningEffort: 'high' })
+  dsh.calls.length = 0
+  const explicit = await (await bridge.post('/sessions', { text: 'hello', model: 'deepseek-flash' })).json()
+  assert.deepEqual(explicit.model, { provider: 'deepseek-account', model: 'deepseek-flash' }, 'an explicit model wins over the default')
+})
