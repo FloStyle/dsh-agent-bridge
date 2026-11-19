@@ -30,16 +30,21 @@ async function resolveId(id) {
 }
 
 const call = rawCall
+/** The model a session will use next (or used last), as provider/model. */
+const modelRef = (selection) => {
+  const pick = selection?.next ?? selection?.lastUsed
+  return pick?.provider && pick?.model ? `${pick.provider}/${pick.model}` : undefined
+}
 const readOnly = (title) => ({ title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false })
 const write = (title, { destructive = false } = {}) => ({ title, readOnlyHint: false, destructiveHint: destructive, idempotentHint: !destructive, openWorldHint: false })
 
 const tools = [
   {
     name: 'dsh_list',
-    description: 'List DeepSeek Harness sessions (id, title, cwd, running, activity). Session ids may be given in full, without the session- prefix, or as a unique prefix like 3a9e7ffb.',
+    description: 'List DeepSeek Harness sessions (id, title, cwd, model, running, activity). Session ids may be given in full, without the session- prefix, or as a unique prefix like 3a9e7ffb.',
     annotations: readOnly('List DSH sessions'),
     inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: MAX_LIMIT, description: 'max rows, default 20' } } },
-    run: async ({ limit = 20 }) => (await call('GET', '/sessions')).items.slice(0, limit).map((i) => ({ sessionId: i.sessionId, shortId: i.sessionId.replace(/^session-/, '').slice(0, 8), title: i.projections?.values?.title, cwd: i.cwd, running: i.running, updatedAt: new Date(i.updatedAt).toISOString() })),
+    run: async ({ limit = 20 }) => (await call('GET', '/sessions')).items.slice(0, limit).map((i) => ({ sessionId: i.sessionId, shortId: i.sessionId.replace(/^session-/, '').slice(0, 8), title: i.projections?.values?.title, cwd: i.cwd, model: modelRef(i.projections?.values?.modelSelection), running: i.running, updatedAt: new Date(i.updatedAt).toISOString() })),
   },
   {
     name: 'dsh_workspaces',
@@ -47,6 +52,28 @@ const tools = [
     annotations: readOnly('List DSH workspaces'),
     inputSchema: { type: 'object', properties: {} },
     run: async () => (await call('GET', '/workspaces')).items,
+  },
+  {
+    name: 'dsh_models',
+    description: 'List the models DSH can run now: the default, and each model as provider/model with its reasoning efforts. Use a ref from here as `model` in dsh_send or dsh_set_model.',
+    annotations: readOnly('List DSH models'),
+    inputSchema: { type: 'object', properties: {} },
+    run: async () => call('GET', '/models'),
+  },
+  {
+    name: 'dsh_set_model',
+    description: 'Switch the model of an existing DSH session. `model` is "provider/model" (see dsh_models), a model id that only one provider offers, or a model name. The switch applies to the next turn.',
+    annotations: write('Switch a DSH session model'),
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId', 'model'],
+      properties: {
+        sessionId: { type: 'string' },
+        model: { type: 'string', maxLength: 200 },
+        reasoningEffort: { type: 'string', maxLength: 40, description: 'one of the efforts dsh_models lists for that model' },
+      },
+    },
+    run: async ({ sessionId, model, reasoningEffort }) => call('POST', `/sessions/${encodeURIComponent(await resolveId(sessionId))}/model`, { model, reasoningEffort }),
   },
   {
     name: 'dsh_read',
@@ -57,7 +84,7 @@ const tools = [
   },
   {
     name: 'dsh_send',
-    description: 'Dispatch work to DSH. With sessionId: send a prompt to that session. Without: create a new session in a workspace (by workspace name/id, or by cwd: the workspace owning that folder, created if missing) and send the prompt. Returns at once with requestId and eventId: always pass eventId as `since` (and bootId) to dsh_wait, so the wait is tied to this turn instead of guessing from idle state.',
+    description: 'Dispatch work to DSH, optionally on a chosen model (`model`, see dsh_models). With sessionId: send a prompt to that session. Without: create a new session in a workspace (by workspace name/id, or by cwd: the workspace owning that folder, created if missing) and send the prompt. Returns at once with requestId and eventId: always pass eventId as `since` (and bootId) to dsh_wait, so the wait is tied to this turn instead of guessing from idle state.',
     annotations: write('Send work to DSH'),
     inputSchema: {
       type: 'object',
@@ -68,11 +95,17 @@ const tools = [
         cwd: { type: 'string', maxLength: 4096, description: 'absolute, existing working folder for a new session; it joins the workspace for that folder' },
         workspace: { type: 'string', maxLength: 4096, description: 'DSH workspace title or id for a new session' },
         mode: { type: 'string', enum: ['followup', 'steer'] },
+        model: { type: 'string', maxLength: 200, description: 'model for this work: "provider/model" from dsh_models, a unique model id, or a model name. New sessions otherwise start on the DSH default.' },
+        reasoningEffort: { type: 'string', maxLength: 40, description: 'reasoning effort for that model, from dsh_models' },
       },
     },
-    run: async ({ text, sessionId, cwd, workspace, mode }) => (sessionId = await resolveId(sessionId))
-      ? { sessionId, ...(await call('POST', `/sessions/${encodeURIComponent(sessionId)}/prompt`, { text, mode })) }
-      : call('POST', '/sessions', { text, cwd, workspace, mode }),
+    run: async ({ text, sessionId, cwd, workspace, mode, model, reasoningEffort }) => {
+      sessionId = await resolveId(sessionId)
+      if (!sessionId) return call('POST', '/sessions', { text, cwd, workspace, mode, model, reasoningEffort })
+      // Switch first, so the prompt already runs on the chosen model.
+      const switched = model ? await call('POST', `/sessions/${encodeURIComponent(sessionId)}/model`, { model, reasoningEffort }) : undefined
+      return { sessionId, ...(switched ? { model: switched.selected } : {}), ...(await call('POST', `/sessions/${encodeURIComponent(sessionId)}/prompt`, { text, mode })) }
+    },
   },
   {
     name: 'dsh_wait',

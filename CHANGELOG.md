@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.4
+
+- Model selection. `GET /models` and the MCP tool `dsh_models` list DSH's model catalog (provider/model, reasoning efforts, default). `dsh_send` and `POST /sessions` take `model` and `reasoningEffort`; the model is selected before the first prompt, and an invalid choice creates nothing. `POST /sessions/:id/model` and `dsh_set_model` switch an existing session. Every switch is audited.
+- `dsh_read` and `dsh_list` show each session's model (from DSH's `modelSelection`).
+- `defaultModel` and `defaultReasoningEffort` in the bridge config set the model of sessions the bridge creates without an explicit choice.
+
 ## 0.6.3
 
 - R2.1 `bin/dsh-bridge.cmd` and `bin/dsh-bridge` launchers. On Windows they run on DeepSeek Harness's own Node (`DeepSeek Harness.exe` with `ELECTRON_RUN_AS_NODE=1`) when no `DSH_NODE` is set, so nothing else needs to be installed. `dsh-bridge runtime` shows the runtime.
