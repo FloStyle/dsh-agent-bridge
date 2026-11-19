@@ -475,11 +475,19 @@ export function apply(ctx, config = {}) {
         }
         if (req.method === 'GET' && parts.length === 3 && parts[2] === 'denials') {
           // W4: read-only, structured sandbox denials for the access report.
-          const history = await sc.events({ address: { kind: 'session', sessionId: parts[1] }, maxMessages: 1000 }, signal)
-          const events = (history.records ?? []).map((record) => record.event).filter(Boolean)
+          // Pages back with beforeSeq through at most 50 pages of 1000 messages.
+          const pages = []
+          let beforeSeq
+          let hasMore = true
+          for (let page = 0; page < 50 && hasMore; page++) {
+            const history = await sc.events({ address: { kind: 'session', sessionId: parts[1] }, maxMessages: 1000, ...(beforeSeq === undefined ? {} : { beforeSeq }) }, signal)
+            pages.unshift((history.records ?? []).map((record) => record.event).filter(Boolean))
+            hasMore = Boolean(history.hasMore) && typeof history.cursor === 'number' && history.cursor !== beforeSeq
+            beforeSeq = history.cursor
+          }
           counters.reads++; entry.kind = 'denials'
           const row = (await sc.list({}, signal)).items.find((i) => i.sessionId === parts[1])
-          return send(res, 200, { sessionId: parts[1], cwd: row?.cwd, hasMore: history.hasMore, denials: parseDenials(events) })
+          return send(res, 200, { sessionId: parts[1], cwd: row?.cwd, truncated: hasMore, denials: parseDenials(pages.flat()) })
         }
         if (req.method === 'POST' && parts.length === 1) {
           const body = await readBody(req)

@@ -51,7 +51,8 @@ export function parseDenials(events) {
     if (shell || !call) {
       for (const pattern of SHELL_PATH) {
         const match = pattern.exec(text)
-        if (match) { path = match[1]; break }
+        // Tools such as Python print paths with escaped backslashes.
+        if (match) { path = match[1].replace(/\\\\/g, '\\'); break }
       }
     } else {
       const args = argsOf(call)
