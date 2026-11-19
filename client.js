@@ -85,7 +85,13 @@ window.__ModuleLoader__.load({
           h(Card, { label: 'Last request', value: ago(data.lastSeen.request, now), sub: `${data.counters.total} total` }),
           h(Card, { label: 'Dispatched', value: data.counters.prompts + data.counters.creates, sub: `${data.counters.creates} new \u00b7 ${data.counters.prompts} prompts` }),
           h(Card, { label: 'Reads', value: data.counters.reads }),
-          h(Card, { label: 'Errors', value: data.counters.errors, sub: data.counters.unauthorized ? `${data.counters.unauthorized} unauthorized` : null })),
+          h(Card, { label: 'Errors', value: data.counters.errors, sub: data.counters.unauthorized ? `${data.counters.unauthorized} unauthorized` : null }),
+          h(Card, { label: 'Full access', value: (data.fullAccess || []).length, sub: (data.fullAccess || []).length ? 'sessions without sandbox' : 'none' })),
+
+        data && (data.fullAccess || []).length > 0 && h('div', { style: { ...css.card, marginTop: 12, borderColor: '#f85149' } },
+          h('div', { style: { fontWeight: 600, color: '#f85149' } }, `Sessions in full access (${data.fullAccess.length})`),
+          data.fullAccess.map((s) => h('div', { key: s.sessionId, style: { ...css.mono, fontSize: 12 } }, `${short(s.sessionId)}  ${s.title || ''}`)),
+          h('div', { style: { ...css.dim, fontSize: 11, marginTop: 4 } }, 'Prefer workspace-write with an access profile. See docs/access-guide.md.')),
 
         h('div', { style: css.h2 }, 'Last requests from agents'),
         reqs.length === 0 ? h('div', { style: css.dim }, 'None yet.') :

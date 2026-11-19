@@ -138,6 +138,14 @@ if (!existsSync(stateFile)) {
         } else if (health.defaultAgentSeen === false) {
           ok('sender name', 'no unnamed client seen')
         }
+        // WB: report sessions in full access. Report only; doctor changes nothing.
+        try {
+          const response = await fetch(`${url.origin}/sessions`, { headers: { authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(10000) })
+          const { items = [] } = response.ok ? await response.json() : {}
+          const wide = items.filter((i) => i.projections?.values?.permissions?.currentValue === 'danger-full-access')
+          if (wide.length) warn('full access', `${wide.length} session(s): ${wide.map((i) => `${i.sessionId.replace(/^session-/, '').slice(0, 8)} "${i.projections?.values?.title ?? ''}"`).join(', ')}`, 'prefer workspace-write with an access profile; see docs/access-guide.md')
+          else ok('full access', 'no session in danger-full-access')
+        } catch { /* the session list is optional for doctor */ }
       }
     }
   }

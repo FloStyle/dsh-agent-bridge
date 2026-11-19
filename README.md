@@ -142,6 +142,9 @@ DSH, otherwise it cannot read the endpoint and token.
 | `dsh_send` | Create a session or send work to an existing session; `model` and `reasoningEffort` choose the model |
 | `dsh_models` | List the models DSH can run now, with their reasoning efforts |
 | `dsh_set_model` | Switch the model of an existing session |
+| `dsh_profiles` | List the owner's access profiles |
+| `dsh_access` | Show a session's preset, profile and extra writable folders |
+| `dsh_apply_profile` | Apply an access profile to an existing session |
 | `dsh_wait` | Wait for a turn to end or for pending user input |
 | `dsh_cancel` | Cancel a turn |
 
@@ -180,6 +183,34 @@ To change the default for sessions **the bridge creates**, set it in the profile
 ```
 
 Sessions you start in the DSH window keep DSH's own default.
+
+### Access profiles
+
+An access profile lets a session stay in `workspace-write` with exactly the extra
+folders it needs, instead of `danger-full-access`. Only the owner writes profiles;
+agents can only name one.
+
+```sh
+dsh-bridge profile add engine --cwd D:\dev\project --root D:\engine\Intermediate --preset workspace-write --yes
+dsh-bridge profile list
+dsh-bridge profile validate
+```
+
+Then `dsh_send` with `profile: "engine"` starts a session in the profile cwd, sets
+its preset and registers the extra folders. The bridge registers them again after
+a DSH restart. Every grant is audited (`action: "grant"`).
+
+Limits, measured on DSH 0.2.2-rc.3 (`docs/spikes/`):
+
+- Extra folders work for DSH's **file tools**. On Windows, shell commands ignore
+  them and stay inside the session cwd.
+- A profile cannot set full access: `danger-full-access` is refused. Drive roots,
+  the home folder, `~/.dsh`, `~/.ssh` and `.git/hooks` are refused unless a root
+  sets `allowSensitive: true`.
+- In the sandbox, Windows-native HTTPS fails. See `docs/access-guide.md` for the
+  git setting that works.
+
+The Bridge tab and `dsh-bridge doctor` list the sessions that run in full access.
 
 ### Delegating a turn
 
@@ -235,8 +266,11 @@ rejected; the UI uses DSH's own authenticated status route instead.
 | GET | `/health` | Build and process identity: version, protocol, bootId, startedAt, pid, clients, lastEventId, injected-service check |
 | GET | `/sessions` | Session summaries |
 | GET | `/sessions/:id?limit=40` | Transcript and execution/pending-input state |
-| POST | `/sessions` | Create, optionally prompt: `{cwd?, workspace?, text?, mode?, model?, reasoningEffort?}`; returns `sessionId`, `model`, `requestId`, `eventId`, `bootId` |
+| POST | `/sessions` | Create, optionally prompt: `{cwd?, workspace?, profile?, text?, mode?, model?, reasoningEffort?}`; returns `sessionId`, `model`, `requestId`, `eventId`, `bootId` |
 | POST | `/sessions/:id/model` | Switch the model: `{model, reasoningEffort?}`; returns `selected` |
+| GET | `/profiles` | The owner's access profiles |
+| POST | `/sessions/:id/profile` | Apply a profile: `{profile}`; the session cwd must match |
+| GET | `/sessions/:id/access` | Preset, profile and registered folders of a session |
 | GET | `/models` | The DSH model catalog: `default`, `providers`, `models[]` with `ref`, `efforts` |
 | POST | `/sessions/:id/prompt` | Prompt: `{text, mode?}`; returns `requestId`, `eventId`, `bootId` |
 | POST | `/sessions/:id/cancel` | Cancel |

@@ -4,6 +4,29 @@
 
 export function createDsh(ctx) {
   const sc = () => ctx.sessionController
+  // Sessions seen through events, as a fallback when the sessions service has no getter.
+  const seenSessions = new Map()
+  // DSH's sandbox policy and permission presets. They are optional: a plugin
+  // that injects a missing service never starts, so they come through a small
+  // sub-plugin and the bridge keeps working without them.
+  let access
+  if (typeof ctx.plugin === 'function') {
+    try {
+      ctx.plugin({
+        name: 'agent-bridge-access',
+        inject: ['sandboxPolicy', 'permissionPresets'],
+        apply(sub) {
+          access = { sandboxPolicy: sub.sandboxPolicy, permissionPresets: sub.permissionPresets }
+          sub.effect(() => () => { access = undefined }, 'agent-bridge: access services')
+        },
+      })
+    } catch (error) {
+      ctx.logger?.warn?.(`agent-bridge: access features disabled: ${error}`)
+    }
+  } else if (ctx.sandboxPolicy && ctx.permissionPresets) {
+    // Test contexts provide the services directly.
+    access = { sandboxPolicy: ctx.sandboxPolicy, permissionPresets: ctx.permissionPresets }
+  }
   const logger = {
     info: (message) => ctx.logger?.info?.(message),
     warn: (message) => ctx.logger?.warn?.(message),
@@ -29,6 +52,16 @@ export function createDsh(ctx) {
     hasModelCatalog: () => typeof sc()?.modelCatalog === 'function',
     modelCatalog: () => sc().modelCatalog(),
     selectModel: (request) => sc().selectModel(request),
+
+    /** The live session object, or undefined when DSH has not loaded it. */
+    sessionById(sessionId) {
+      let session
+      try { session = ctx.sessions?.get?.(sessionId) } catch { session = undefined }
+      return session ?? seenSessions.get(sessionId)
+    },
+    rememberSession: (session) => { if (session?.id) seenSessions.set(session.id, session) },
+    /** {sandboxPolicy, permissionPresets} when this DSH build provides them. */
+    accessServices: () => access,
 
     /** The agent status of a live session ('idle', …), or undefined. */
     agentStatus: (sessionId) => ctx.agents.get(sessionId)?.status,

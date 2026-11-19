@@ -8,7 +8,7 @@ import { validatePrompt } from './prompt.js'
 import { agentNameOf, clip, compact } from './transcript.js'
 import { resolveWorkspace, wsInfo } from './workspaces.js'
 
-export function createHandler({ dsh, hub, status, authorized, audit, prompter, config, health }) {
+export function createHandler({ dsh, hub, status, authorized, audit, prompter, access, config, health }) {
   const { counters, lastSeen } = status
   const { prompt, modelCatalog, selectModel, agentOfRequest } = prompter
 
@@ -75,6 +75,7 @@ export function createHandler({ dsh, hub, status, authorized, audit, prompter, c
       }
 
       if (req.method === 'GET' && url.pathname === '/models') return send(res, 200, flattenCatalog(await modelCatalog()))
+      if (req.method === 'GET' && url.pathname === '/profiles') return send(res, 200, { items: access.list() })
       if (req.method === 'GET' && url.pathname === '/workspaces') return send(res, 200, { items: dsh.listWorkspaces().map(wsInfo) })
 
       if (parts[0] === 'sessions') {
@@ -93,6 +94,13 @@ export function createHandler({ dsh, hub, status, authorized, audit, prompter, c
           const row = (await listSessions(signal)).items.find((i) => i.sessionId === sessionId)
           return send(res, 200, { sessionId, title: row?.projections?.values?.title, cwd: row?.cwd, model: sessionModel(row?.projections?.values), running: state.running, pendingInput: state.pendingInput, cursor: history.cursor, hasMore: history.hasMore, entries: compact(events, limit, agentOfRequest) })
         }
+        if (req.method === 'GET' && parts.length === 3 && parts[2] === 'access') return send(res, 200, access.view(sessionId))
+        if (req.method === 'POST' && parts.length === 3 && parts[2] === 'profile') {
+          const body = await readBody(req)
+          entry.kind = 'profile'
+          const row = (await listSessions(signal)).items.find((i) => i.sessionId === sessionId)
+          return send(res, 200, { sessionId, access: access.apply(sessionId, body.profile, entry.agent, { cwd: dsh.sessionById(sessionId)?.header?.cwd ?? row?.cwd }) })
+        }
         if (req.method === 'GET' && parts.length === 3 && parts[2] === 'denials') {
           // W4: read-only, structured sandbox denials for the access report.
           const { events, truncated } = await allEvents(sessionId, signal)
@@ -108,6 +116,12 @@ export function createHandler({ dsh, hub, status, authorized, audit, prompter, c
               audit({ action: 'prompt', outcome: 'refused', status: error.status ?? 400, agent: entry.agent, mode: body.mode ?? 'followup', text: body.text })
               throw error
             }
+          }
+          // A profile fixes the cwd; an agent names the profile, never a path.
+          const profile = body.profile !== undefined ? access.profileNamed(body.profile) : undefined
+          if (profile) {
+            if (body.cwd !== undefined && body.cwd !== profile.cwd) return send(res, 400, { error: `profile "${profile.name}" sets the cwd; do not pass another one` })
+            body.cwd = profile.cwd
           }
           for (const field of ['cwd', 'workspace']) if (body[field] !== undefined && (typeof body[field] !== 'string' || !body[field].trim() || body[field].length > 4096)) return send(res, 400, { error: `Invalid ${field}` })
           if (body.cwd !== undefined) {
@@ -128,9 +142,10 @@ export function createHandler({ dsh, hub, status, authorized, audit, prompter, c
           entry.workspace = ws?.title
           entry.sessionId = created.sessionId
           audit({ action: 'create', outcome: 'accepted', status: 200, agent: entry.agent, sessionId: created.sessionId, cwd: body.cwd, workspace: ws?.title })
+          const applied = profile ? access.apply(created.sessionId, profile.name, entry.agent, { cwd: profile.cwd }) : undefined
           const model = selection ? await selectModel(created.sessionId, selection, entry.agent) : undefined
           const prompted = body.text ? await prompt(created.sessionId, body.text, body.mode, entry.agent) : undefined
-          return send(res, 200, { ...created, ...(model ? { model } : {}), ...(prompted ?? {}), bootId: hub.bootId, eventId: prompted?.eventId ?? hub.lastId() })
+          return send(res, 200, { ...created, ...(applied ? { access: applied } : {}), ...(model ? { model } : {}), ...(prompted ?? {}), bootId: hub.bootId, eventId: prompted?.eventId ?? hub.lastId() })
         }
         if (req.method === 'POST' && parts.length === 3 && parts[2] === 'prompt') {
           const body = await readBody(req)
