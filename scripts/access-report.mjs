@@ -37,13 +37,23 @@ try {
   const cutoff = sinceMs ? Date.now() - sinceMs : 0
   const ids = await sessionIds()
   const all = []
+  const skipped = []
+  const truncated = []
   for (const id of ids) {
-    const { denials } = await call('GET', `/sessions/${encodeURIComponent(id)}/denials`)
-    for (const denial of denials) if (!cutoff || (denial.time ?? 0) >= cutoff) all.push({ ...denial, sessionId: id })
+    let body
+    try {
+      body = await call('GET', `/sessions/${encodeURIComponent(id)}/denials`)
+    } catch (error) {
+      // Subagent sessions, for example, can only be read through their parent.
+      skipped.push({ sessionId: id, error: error.message })
+      continue
+    }
+    if (body.truncated) truncated.push(id)
+    for (const denial of body.denials) if (!cutoff || (denial.time ?? 0) >= cutoff) all.push({ ...denial, sessionId: id })
   }
   const groups = groupDenials(all)
   if (asJson) {
-    process.stdout.write(JSON.stringify({ sessions: ids.length, denials: all.length, groups }, null, 2) + '\n')
+    process.stdout.write(JSON.stringify({ sessions: ids.length, denials: all.length, groups, skipped, truncated }, null, 2) + '\n')
   } else if (!groups.length) {
     console.log(`No sandbox denials in ${ids.length} session(s).`)
   } else {
@@ -54,6 +64,8 @@ try {
       if (group.examples.length) console.log(`       e.g. ${group.examples[0]}`)
     }
   }
+  if (!asJson && skipped.length) console.log(`\nSkipped ${skipped.length} session(s) the bridge could not read: ${skipped.map((s) => s.sessionId).join(', ')}`)
+  if (!asJson && truncated.length) console.log(`History too long, only the newest 50,000 messages read: ${truncated.join(', ')}`)
 } catch (error) {
   console.error(`access-report: ${error.message}`)
   process.exit(1)
