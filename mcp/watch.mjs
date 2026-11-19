@@ -2,10 +2,29 @@
 // Print one line per DSH notification (turn end, error, pending input).
 // Made for any MCP client's Monitor tool: each stdout line becomes a notification.
 // Usage: node watch.mjs [--session <id>] [--all]   (--all also prints status/user-message)
-import { follow } from './lib.mjs'
+import { call, follow } from './lib.mjs'
 
 const args = process.argv.slice(2)
-const only = args.includes('--session') ? args[args.indexOf('--session') + 1] : undefined
+const wanted = args.includes('--session') ? args[args.indexOf('--session') + 1] : undefined
+
+/** S5: accept a full id or a unique prefix, like the MCP tools. */
+async function resolveSession(id) {
+  if (!id) return undefined
+  const key = String(id).trim().replace(/^session-/, '').toLowerCase()
+  for (;;) {
+    try {
+      const { items } = await call('GET', '/sessions')
+      const hits = items.filter((i) => i.sessionId.replace(/^session-/, '').toLowerCase().startsWith(key))
+      if (hits.length === 1) return hits[0].sessionId
+      console.error(hits.length ? `session id "${id}" is ambiguous` : `no DSH session matches "${id}"`)
+      process.exit(2)
+    } catch (e) {
+      console.error(`bridge not reachable (${e.message}); retrying in 5s`)
+      await new Promise((r) => setTimeout(r, 5000))
+    }
+  }
+}
+const only = await resolveSession(wanted)
 const all = args.includes('--all')
 const oneLine = (s, n = 300) => String(s ?? '').replace(/\s+/g, ' ').slice(0, n)
 let bootId

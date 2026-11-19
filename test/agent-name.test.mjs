@@ -13,7 +13,7 @@ import { startBridge, withTimeout } from './helpers.mjs'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const SESSION = 'test-session'
 
-test('every documented MCP config sets a sender name', () => {
+test('every documented MCP config sets a sender name', async () => {
   const readme = readFileSync(join(root, 'README.md'), 'utf8')
   const blocks = [...readme.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((match) => match[1])
   const configs = blocks.filter((block) => /mcpServers|mcp_servers|claude mcp add/.test(block))
@@ -21,8 +21,13 @@ test('every documented MCP config sets a sender name', () => {
   for (const config of configs) {
     assert.match(config, /DSH_AGENT_NAME/, `a documented MCP config omits DSH_AGENT_NAME:\n${config}`)
   }
-  for (const script of ['scripts/connect-claude-code.ps1', 'scripts/connect-claude-code.sh']) {
-    assert.match(readFileSync(join(root, script), 'utf8'), /DSH_AGENT_NAME/, `${script} must set DSH_AGENT_NAME`)
+  // The connect scripts delegate to `dsh-bridge connect` (test/cli.test.mjs).
+  // The CLI must always set the sender name, whatever the client.
+  const { mcpConfig } = await import('../src/cli/connect.js')
+  const runtime = { source: 'path', command: process.execPath, env: {} }
+  for (const client of ['claude', 'codex', 'generic']) {
+    const config = mcpConfig(client, { name: 'agent-x', runtime, entry: join(root, 'mcp', 'mcp.mjs') })
+    assert.match(JSON.stringify(config), /DSH_AGENT_NAME/, `dsh-bridge connect ${client} must set DSH_AGENT_NAME`)
   }
 })
 
