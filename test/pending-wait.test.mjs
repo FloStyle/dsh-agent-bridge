@@ -39,7 +39,10 @@ test('a wait with a cursor ends on pending input for that session', async (t) =>
     'dsh_wait',
   )
   assert.ok(Date.now() - started < 2000, 'the wait must end on the pending input, not the timeout')
-  assert.deepEqual(waited.pendingInput, ['approval'])
+  // N3: the kinds come back as pendingKinds; pendingInput keeps the session
+  // state's own shape on every path.
+  assert.deepEqual(waited.pendingKinds, ['approval'])
+  assert.deepEqual(waited.pendingInput, [], 'pendingInput stays the value the session state reports')
   assert.equal(waited.timedOut, undefined)
 })
 

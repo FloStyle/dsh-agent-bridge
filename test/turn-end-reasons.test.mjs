@@ -57,3 +57,12 @@ test('dsh_wait reports incomplete: true for a truncated turn', async (t) => {
   assert.equal(waited.incomplete, true)
   assert.equal(waited.cancelled, undefined)
 })
+
+test('the default agent name counts only after authentication', async (t) => {
+  const bridge = await startBridge()
+  t.after(() => bridge.stop())
+  const anonymous = await fetch(`${bridge.url}/health`, { headers: { 'x-agent-name': 'mcp-agent' } })
+  assert.equal(anonymous.status, 401)
+  const health = await (await bridge.get('/health')).json()
+  assert.equal(health.defaultAgentSeen, false, 'an unauthenticated request must not set defaultAgentSeen')
+})
