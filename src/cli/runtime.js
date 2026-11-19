@@ -5,12 +5,13 @@
 // `DeepSeek Harness.exe` with ELECTRON_RUN_AS_NODE=1 is a Node 24 runtime.
 // Only the Windows install path is known; macOS and Linux use DSH_NODE or PATH.
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { win32 } from 'node:path'
 
 /** Known DeepSeek Harness executables, by platform. */
 export function dshExecutables({ env = process.env, platform = process.platform } = {}) {
   if (platform === 'win32' && env.LOCALAPPDATA) {
-    return [join(env.LOCALAPPDATA, 'Programs', 'DeepSeek Harness', 'DeepSeek Harness.exe')]
+    // Windows path rules whatever the host, so the answer is the same on every OS.
+    return [win32.join(env.LOCALAPPDATA, 'Programs', 'DeepSeek Harness', 'DeepSeek Harness.exe')]
   }
   return []
 }
