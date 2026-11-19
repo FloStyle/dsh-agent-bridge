@@ -186,3 +186,17 @@ test('MCP: dsh_profiles lists names without leaking more than the owner wrote, a
   const [row] = await withTimeout(mcp.callTool('dsh_list', {}), 10000, 'dsh_list')
   assert.equal(row.preset, 'danger-full-access', 'dsh_list shows the preset DSH reports')
 })
+
+test('the Bridge tab status lists the sessions in full access', async (t) => {
+  const bridge = await startBridge({
+    controller: { list: async () => ({ items: [
+      { sessionId: 'session-wide', cwd: 'D:\w', updatedAt: Date.now(), projections: { values: { title: 'wide one', permissions: { currentValue: 'danger-full-access' } } } },
+      { sessionId: 'session-safe', cwd: 'D:\w', updatedAt: Date.now(), projections: { values: { permissions: { currentValue: 'workspace-write' } } } },
+    ] }) },
+  })
+  t.after(() => bridge.stop())
+  const response = await bridge.routes.get('/api/agent-bridge/status')()
+  const status = await response.json()
+  assert.deepEqual(status.fullAccess.map((s) => s.sessionId), ['session-wide'])
+  assert.equal(status.fullAccess[0].title, 'wide one')
+})
