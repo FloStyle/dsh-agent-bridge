@@ -1,5 +1,50 @@
 # Security and privacy
 
+## Threat model
+
+Read this first. It says what the bridge protects against and what it does not.
+
+**The bridge protects against:**
+
+- **Other machines.** It listens on `127.0.0.1` only, and accepts only a loopback
+  `Host` header.
+- **Web pages in your browser.** Requests that carry an `Origin` are refused, there
+  is no CORS, and a page cannot read the token, so DNS rebinding gets nothing.
+- **Other OS users on the same machine**, as far as your file permissions go. The
+  token, state, audit, profile and template files are private to your user. On
+  POSIX they are mode 0600. On Windows they rely on your user-profile folder's
+  permissions.
+- **Mistakes by honest agents.** Validation, hop limits, the audit trail,
+  refusing full access in profiles, and having no delete are there to catch an
+  agent that does the wrong thing by accident.
+
+**The bridge does not protect against:**
+
+- **Any program or agent that runs as your user and has a shell.** That includes
+  DSH sessions, Codex, Claude Code and any script. Such a program can:
+  - read every token file
+  - call the bridge as any agent
+  - edit the "owner-written" profile and template files
+  - change the DSH configuration directly
+
+  The bridge is a convenience and an audit trail between agents you trust, not a
+  security boundary between them.
+- **What DSH itself allows.** Tool approvals and the sandbox mode are DSH's. The
+  bridge never answers an approval and never sets full access, but an agent with
+  your rights can do so through DSH's own interface.
+
+**Consequences for the Phase 3 identity work:**
+
+- Per-agent tokens and scopes are for **attribution and preventing accidents**:
+  each request names its agent reliably as long as agents do not read each
+  other's token files. They do not stop an agent that decides to.
+- "Only the owner writes profiles and templates" means: no bridge API writes them.
+  It does not mean the files are protected from other programs of your user.
+- A message from another agent (`bridge_ping`) is **data, not an instruction**.
+  The receiving agent must treat it like any other untrusted input.
+
+## Details
+
 - Bind only to `127.0.0.1`. Do not proxy or forward the control port onto a LAN or
   the Internet. No browser origins or CORS access are accepted.
 - The bearer token permits listing/reading every available DSH session, creating
