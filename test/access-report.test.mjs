@@ -64,6 +64,34 @@ test('GET /sessions/:id/denials returns the parsed denials', async (t) => {
   assert.equal(body.denials.length, 4)
 })
 
+test('GET /sessions/:id/denials pages back through the whole history', async (t) => {
+  // Two pages: the newest one has no denial; the older one has them all.
+  const requests = []
+  const bridge = await startBridge({
+    controller: {
+      events: async (request) => {
+        requests.push(request.beforeSeq)
+        if (request.beforeSeq === undefined) return { records: [{ event: { type: 'user/message', seq: 900, data: {} } }], cursor: 900, hasMore: true }
+        return { records: events.map((event) => ({ event })), cursor: 31, hasMore: false }
+      },
+      list: async () => ({ items: [{ sessionId: 's1', cwd: 'D:\\work', updatedAt: Date.now() }] }),
+    },
+  })
+  t.after(() => bridge.stop())
+  const body = await (await bridge.get('/sessions/s1/denials')).json()
+  assert.deepEqual(requests, [undefined, 900], 'the second page starts before the first page cursor')
+  assert.equal(body.denials.length, 4)
+  assert.equal(body.truncated, false)
+})
+
+test('parseDenials undoes escaped backslashes in shell paths', () => {
+  const escaped = [
+    { type: 'tool/call', seq: 1, data: { callId: 'c', name: 'pwsh', arguments: '{}' } },
+    { type: 'tool/result', seq: 2, data: { message: { isError: false, source: { kind: 'tool', callId: 'c' }, content: [{ type: 'text', text: "PermissionError: [Errno 13] Permission denied: 'D:\\\\work\\\\tmp\\\\x'\n[sandbox: file access denied under workspace-write mode]" }] } } },
+  ]
+  assert.equal(parseDenials(escaped)[0].path, 'D:\\work\\tmp\\x')
+})
+
 test('access-report prints groups for a session and changes nothing', async (t) => {
   const bridge = await startBridge({
     controller: {
