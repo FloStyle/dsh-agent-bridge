@@ -16,6 +16,7 @@ import { createServer } from 'node:http'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { parseDenials } from './src/denials.js'
+import { flattenCatalog, resolveModel, sessionModel } from './src/models.js'
 import { PROTOCOL, VERSION as version } from './src/version.js'
 
 
@@ -396,6 +397,23 @@ export function apply(ctx, config = {}) {
     fetch: () => new Response(JSON.stringify(statusPayload()), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } }),
   }), 'agent-bridge: status route')
 
+  // Model selection through DSH's own catalog; every switch is audited.
+  const modelCatalog = async () => {
+    if (typeof sc.modelCatalog !== 'function') throw Object.assign(new Error('this DSH build has no model catalog'), { status: 501 })
+    return sc.modelCatalog()
+  }
+  const selectModel = async (sessionId, selection, agent) => {
+    const ref = `${selection.provider}/${selection.model}`
+    try {
+      const value = await sc.selectModel({ sessionId, ...selection })
+      audit({ action: 'model', outcome: 'accepted', status: 200, agent, sessionId, model: ref, reasoningEffort: selection.reasoningEffort })
+      return value?.selected ?? selection
+    } catch (error) {
+      audit({ action: 'model', outcome: 'failed', status: error.status ?? 500, agent, sessionId, model: ref, error: String(error?.message ?? error) })
+      throw error
+    }
+  }
+
   // P3: one session list per second at most; a create clears it.
   let listCache
   const listSessions = async (signal) => {
@@ -460,6 +478,10 @@ export function apply(ctx, config = {}) {
         return
       }
 
+      if (req.method === 'GET' && url.pathname === '/models') {
+        return send(res, 200, flattenCatalog(await modelCatalog()))
+      }
+
       if (req.method === 'GET' && url.pathname === '/workspaces') {
         return send(res, 200, { items: ctx.workspaceRegistry.list().map(wsInfo) })
       }
@@ -477,7 +499,7 @@ export function apply(ctx, config = {}) {
           const events = (history.records ?? []).map(record => record.event).filter(Boolean)
           counters.reads++; entry.kind = 'read'
           const row = (await listSessions(signal)).items.find((i) => i.sessionId === parts[1])
-          return send(res, 200, { sessionId: parts[1], title: row?.projections?.values?.title, cwd: row?.cwd, running: state.running, pendingInput: state.pendingInput, cursor: history.cursor, hasMore: history.hasMore, entries: compact(events, limit, agentOfRequest) })
+          return send(res, 200, { sessionId: parts[1], title: row?.projections?.values?.title, cwd: row?.cwd, model: sessionModel(row?.projections?.values), running: state.running, pendingInput: state.pendingInput, cursor: history.cursor, hasMore: history.hasMore, entries: compact(events, limit, agentOfRequest) })
         }
         if (req.method === 'GET' && parts.length === 3 && parts[2] === 'denials') {
           // W4: read-only, structured sandbox denials for the access report.
@@ -512,6 +534,10 @@ export function apply(ctx, config = {}) {
             try { directory = statSync(body.cwd).isDirectory() } catch { directory = false }
             if (!directory) return send(res, 400, { error: 'cwd must be an existing directory' })
           }
+          // Resolve the model before a session exists, so a bad choice creates nothing.
+          // An explicit model wins; otherwise the bridge's configured default, if any.
+          const wanted = body.model !== undefined ? { model: body.model, effort: body.reasoningEffort } : config.defaultModel ? { model: config.defaultModel, effort: config.defaultReasoningEffort } : undefined
+          const selection = wanted ? resolveModel(wanted.model, wanted.effort, await modelCatalog()) : undefined
           counters.creates++; entry.kind = 'create'; entry.text = clip(body.text, 200); entry.cwd = body.cwd
           const ws = await resolveWorkspace(body.workspace, body.cwd)
           const created = await sc.create(ws ? { workspaceId: ws.id } : body.cwd ? { cwd: body.cwd } : {})
@@ -519,14 +545,27 @@ export function apply(ctx, config = {}) {
           entry.workspace = ws?.title
           entry.sessionId = created.sessionId
           audit({ action: 'create', outcome: 'accepted', status: 200, agent: entry.agent, sessionId: created.sessionId, cwd: body.cwd, workspace: ws?.title })
+          const model = selection ? await selectModel(created.sessionId, selection, entry.agent) : undefined
           const prompted = body.text ? await prompt(created.sessionId, body.text, body.mode, entry.agent) : undefined
-          return send(res, 200, { ...created, ...(prompted ?? {}), bootId, eventId: prompted?.eventId ?? seq })
+          return send(res, 200, { ...created, ...(model ? { model } : {}), ...(prompted ?? {}), bootId, eventId: prompted?.eventId ?? seq })
         }
         if (req.method === 'POST' && parts.length === 3 && parts[2] === 'prompt') {
           const body = await readBody(req)
           counters.prompts++; entry.kind = body.mode === 'steer' ? 'steer' : 'prompt'; entry.text = clip(body.text, 200)
           // prompt() validates and audits the refusal itself.
           return send(res, 200, await prompt(parts[1], body.text, body.mode, entry.agent))
+        }
+        if (req.method === 'POST' && parts.length === 3 && parts[2] === 'model') {
+          const body = await readBody(req)
+          entry.kind = 'model'
+          let selection
+          try {
+            selection = resolveModel(body.model, body.reasoningEffort, await modelCatalog())
+          } catch (error) {
+            audit({ action: 'model', outcome: 'refused', status: error.status ?? 400, agent: entry.agent, sessionId: parts[1], model: typeof body.model === 'string' ? body.model : undefined })
+            throw error
+          }
+          return send(res, 200, { sessionId: parts[1], selected: await selectModel(parts[1], selection, entry.agent) })
         }
         if (req.method === 'POST' && parts.length === 3 && parts[2] === 'cancel') {
           try {

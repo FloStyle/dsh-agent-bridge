@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-bridge",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Local HTTP + SSE bridge so any MCP agent can list, read, prompt and follow DeepSeek Harness sessions.",
   "type": "module",
   "main": "./index.js",

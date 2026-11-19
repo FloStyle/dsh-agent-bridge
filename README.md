@@ -136,10 +136,12 @@ DSH, otherwise it cannot read the endpoint and token.
 
 | Tool | Purpose |
 | --- | --- |
-| `dsh_list` | List sessions |
+| `dsh_list` | List sessions, with each session's model |
 | `dsh_workspaces` | List workspaces |
 | `dsh_read` | Read a bounded transcript; accepts a unique session ID prefix |
-| `dsh_send` | Create a session or send work to an existing session |
+| `dsh_send` | Create a session or send work to an existing session; `model` and `reasoningEffort` choose the model |
+| `dsh_models` | List the models DSH can run now, with their reasoning efforts |
+| `dsh_set_model` | Switch the model of an existing session |
 | `dsh_wait` | Wait for a turn to end or for pending user input |
 | `dsh_cancel` | Cancel a turn |
 
@@ -151,6 +153,33 @@ For a new session, supply an **absolute, existing** `cwd` or a `workspace`.
 Existing busy sessions reject ordinary prompts; `mode: "steer"` must be explicit.
 Approval and question prompts remain under DSH's controls. The bridge never
 approves them.
+
+### Choosing the model
+
+New DSH sessions start on DSH's default model. To choose, call `dsh_models`, then
+pass a `model` to `dsh_send` (new or existing session) or `dsh_set_model`:
+
+- `"provider/model"`, for example `"deepseek-account/deepseek-v4-pro"`
+- a model id that only one provider offers, for example `"deepseek-v4-pro"`
+- a model name as `dsh_models` shows it
+
+`reasoningEffort` is optional and must be one the model lists. A bad choice is
+refused with the list of valid ones, before anything is created. Every switch is
+written to the audit log (`action: "model"`). `dsh_read` and `dsh_list` show the
+model each session uses next.
+
+To change the default for sessions **the bridge creates**, set it in the profile's
+`cordis.patch.yml`:
+
+```yaml
+- id: agent-bridge
+  name: dsh-agent-bridge
+  config:
+    defaultModel: deepseek-account/deepseek-v4-pro
+    defaultReasoningEffort: high
+```
+
+Sessions you start in the DSH window keep DSH's own default.
 
 ### Delegating a turn
 
@@ -206,7 +235,9 @@ rejected; the UI uses DSH's own authenticated status route instead.
 | GET | `/health` | Build and process identity: version, protocol, bootId, startedAt, pid, clients, lastEventId, injected-service check |
 | GET | `/sessions` | Session summaries |
 | GET | `/sessions/:id?limit=40` | Transcript and execution/pending-input state |
-| POST | `/sessions` | Create, optionally prompt: `{cwd?, workspace?, text?, mode?}`; returns `sessionId`, `requestId`, `eventId`, `bootId` |
+| POST | `/sessions` | Create, optionally prompt: `{cwd?, workspace?, text?, mode?, model?, reasoningEffort?}`; returns `sessionId`, `model`, `requestId`, `eventId`, `bootId` |
+| POST | `/sessions/:id/model` | Switch the model: `{model, reasoningEffort?}`; returns `selected` |
+| GET | `/models` | The DSH model catalog: `default`, `providers`, `models[]` with `ref`, `efforts` |
 | POST | `/sessions/:id/prompt` | Prompt: `{text, mode?}`; returns `requestId`, `eventId`, `bootId` |
 | POST | `/sessions/:id/cancel` | Cancel |
 | GET | `/sessions/:id/denials` | Sandbox denials of the session (read-only), for `scripts/access-report.mjs` |
