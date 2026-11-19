@@ -94,6 +94,55 @@ const tools = [
     run: async (args) => call('POST', '/ping', args),
   },
   {
+    name: 'dsh_session_title',
+    description: 'Rename a DSH session.',
+    annotations: write('Rename a DSH session'),
+    inputSchema: { type: 'object', required: ['sessionId', 'title'], properties: { sessionId: { type: 'string' }, title: { type: 'string', minLength: 1, maxLength: 200 } } },
+    run: async ({ sessionId, title }) => call('POST', `/sessions/${encodeURIComponent(await resolveId(sessionId))}/title`, { title }),
+  },
+  {
+    name: 'dsh_session_archive',
+    description: 'Archive (hide) or unarchive a DSH session. Its history stays; nothing is deleted. A session with running work is not archived.',
+    annotations: write('Archive a DSH session'),
+    inputSchema: { type: 'object', required: ['sessionId', 'archived'], properties: { sessionId: { type: 'string' }, archived: { type: 'boolean' } } },
+    run: async ({ sessionId, archived }) => call('POST', `/sessions/${encodeURIComponent(await resolveId(sessionId))}/${archived ? 'archive' : 'unarchive'}`, {}),
+  },
+  {
+    name: 'dsh_session_pin',
+    description: 'Pin or unpin a DSH session in the sidebar.',
+    annotations: write('Pin a DSH session'),
+    inputSchema: { type: 'object', required: ['sessionId', 'pinned'], properties: { sessionId: { type: 'string' }, pinned: { type: 'boolean' } } },
+    run: async ({ sessionId, pinned }) => call('POST', `/sessions/${encodeURIComponent(await resolveId(sessionId))}/${pinned ? 'pin' : 'unpin'}`, {}),
+  },
+  {
+    name: 'dsh_sessions_by_workspace',
+    description: 'List the sessions of one DSH workspace, by workspace id or title.',
+    annotations: readOnly('List a workspace sessions'),
+    inputSchema: { type: 'object', required: ['workspace'], properties: { workspace: { type: 'string' } } },
+    run: async ({ workspace }) => (await call('GET', `/workspaces/${encodeURIComponent(workspace)}/sessions`)).items,
+  },
+  {
+    name: 'dsh_workspace_create',
+    description: 'Create a DSH workspace for an existing folder (or return the one that already owns it).',
+    annotations: write('Create a DSH workspace'),
+    inputSchema: { type: 'object', required: ['path'], properties: { path: { type: 'string', maxLength: 4096 }, title: { type: 'string', maxLength: 200 } } },
+    run: async ({ path, title }) => call('POST', '/workspaces', { path, title }),
+  },
+  {
+    name: 'dsh_workspace_rename',
+    description: 'Rename a DSH workspace, by id or title.',
+    annotations: write('Rename a DSH workspace'),
+    inputSchema: { type: 'object', required: ['workspace', 'title'], properties: { workspace: { type: 'string' }, title: { type: 'string', minLength: 1, maxLength: 200 } } },
+    run: async ({ workspace, title }) => call('POST', `/workspaces/${encodeURIComponent(workspace)}/title`, { title }),
+  },
+  {
+    name: 'dsh_templates',
+    description: 'List the session templates the owner defined. Pass a template name as `template` to dsh_send to start a session from it.',
+    annotations: readOnly('List session templates'),
+    inputSchema: { type: 'object', properties: {} },
+    run: async () => (await call('GET', '/templates')).items,
+  },
+  {
     name: 'dsh_profiles',
     description: 'List the access profiles the owner defined: name, description, cwd, extra writable folders and preset. Pass a profile name as `profile` to dsh_send to start a session with it.',
     annotations: readOnly('List access profiles'),
@@ -137,11 +186,12 @@ const tools = [
         model: { type: 'string', maxLength: 200, description: 'model for this work: "provider/model" from dsh_models, a unique model id, or a model name. New sessions otherwise start on the DSH default.' },
         reasoningEffort: { type: 'string', maxLength: 40, description: 'reasoning effort for that model, from dsh_models' },
         profile: { type: 'string', maxLength: 64, description: 'new session only: an access profile from dsh_profiles; it sets the cwd, preset and extra writable folders' },
+        template: { type: 'string', maxLength: 64, description: 'new session only: a session template from dsh_templates; its first prompt comes before `text`' },
       },
     },
-    run: async ({ text, sessionId, cwd, workspace, mode, model, reasoningEffort, profile }) => {
+    run: async ({ text, sessionId, cwd, workspace, mode, model, reasoningEffort, profile, template }) => {
       sessionId = await resolveId(sessionId)
-      if (!sessionId) return call('POST', '/sessions', { text, cwd, workspace, mode, model, reasoningEffort, profile })
+      if (!sessionId) return call('POST', '/sessions', { text, cwd, workspace, mode, model, reasoningEffort, profile, template })
       // Switch first, so the prompt already runs on the chosen model.
       const switched = model ? await call('POST', `/sessions/${encodeURIComponent(sessionId)}/model`, { model, reasoningEffort }) : undefined
       return { sessionId, ...(switched ? { model: switched.selected } : {}), ...(await call('POST', `/sessions/${encodeURIComponent(sessionId)}/prompt`, { text, mode })) }

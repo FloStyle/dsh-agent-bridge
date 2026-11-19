@@ -2,6 +2,10 @@
 
 ## Unreleased (0.7.0-pre)
 
+- W6 session and workspace management through DSH's own APIs, each change audited: rename, archive and unarchive, pin and unpin a session; create and rename a workspace; list a workspace's sessions. There is no delete. MCP tools `dsh_session_title`, `dsh_session_archive`, `dsh_session_pin`, `dsh_sessions_by_workspace`, `dsh_workspace_create`, `dsh_workspace_rename`.
+- Session templates: `dsh-bridge template list|show|add|remove` (owner-written, `--yes` writes), `GET /templates` and `dsh_templates`, and `template` on `dsh_send` / `POST /sessions` (profile or cwd, model, agent preset, first prompt).
+- W5.2 (per-profile shell environment) is dropped: DSH accepts only `DSH_*` variables from plugins.
+
 - R3.5 ping-lite: `POST /ping` and the MCP tool `bridge_ping` send short messages (`ping`, `review-request`, `review-result`, `question`, `done`) with a thread, `inReplyTo`, an optional `ref`, a hop limit of 6 and an audit line. DSH agents get a `bridge_ping` tool whose sender is the calling session. Messages to `dsh:<id>` are delivered into that session through the DSH queue. `watch --agent <name> --until message --exit` wakes an external agent. In memory only.
 - R3.4 `mode: "queue"` hands a prompt to the DSH queue of a busy session; `followup` still refuses one.
 - R3.6 `since` must be a non-negative integer; a cursor older than the event buffer gets a `gap` event first (T5); only a loopback `Host` header is accepted (X3).

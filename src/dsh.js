@@ -74,6 +74,13 @@ export function createDsh(ctx) {
     // Workspaces.
     listWorkspaces: () => ctx.workspaceRegistry.list(),
     createWorkspace: (path, title) => ctx.workspaceRegistry.create(path, title),
+    getWorkspace: (id) => ctx.workspaceRegistry.get?.(id),
+    renameSession: (sessionId, title) => sc().rename({ sessionId, title }),
+    // Archive refuses a session with running work (DSH's default); the bridge never stops it.
+    archiveSession: (sessionId) => ctx.workspaceRegistry.archiveSession(sessionId),
+    unarchiveSession: (sessionId) => ctx.workspaceRegistry.unarchiveSession(sessionId),
+    pinSession: (sessionId) => ctx.workspaceRegistry.pinSession(sessionId),
+    unpinSession: (sessionId) => ctx.workspaceRegistry.unpinSession(sessionId),
 
     // Events and lifecycle.
     onSessionEvent: (handler) => ctx.on('session/event', handler),
