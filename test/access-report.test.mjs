@@ -84,6 +84,31 @@ test('GET /sessions/:id/denials pages back through the whole history', async (t)
   assert.equal(body.truncated, false)
 })
 
+test('access-report skips a session it cannot read and says which', async (t) => {
+  const bridge = await startBridge({
+    controller: {
+      events: async (request) => {
+        if (request.address.sessionId === 'sub') throw new Error('subagent Sessions require their durable parent address')
+        return { records: events.map((event) => ({ event })), cursor: 31, hasMore: false }
+      },
+      list: async () => ({ items: [{ sessionId: 's1', cwd: 'D:\\work', updatedAt: Date.now() }, { sessionId: 'sub', cwd: 'D:\\work', updatedAt: Date.now() }] }),
+    },
+  })
+  t.after(() => bridge.stop())
+  const child = spawn(process.execPath, [join(root, 'scripts', 'access-report.mjs'), '--json'], {
+    env: { ...process.env, DSH_BRIDGE_STATE_FILE: bridge.file, DSH_AGENT_NAME: 'test' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let out = ''
+  child.stdout.on('data', (c) => { out += c })
+  const code = await withTimeout(new Promise((resolve) => child.once('close', resolve)), 15000, 'access-report')
+  assert.equal(code, 0)
+  const report = JSON.parse(out)
+  assert.equal(report.denials, 4)
+  assert.deepEqual(report.skipped.map((s) => s.sessionId), ['sub'])
+  assert.match(report.skipped[0].error, /parent address/)
+})
+
 test('parseDenials undoes escaped backslashes in shell paths', () => {
   const escaped = [
     { type: 'tool/call', seq: 1, data: { callId: 'c', name: 'pwsh', arguments: '{}' } },
