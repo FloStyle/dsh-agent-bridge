@@ -102,9 +102,26 @@ test('POST /sessions with an invalid model creates nothing', async (t) => {
   assert.equal(dsh.calls.length, 0)
 })
 
+test('a session read and dsh_list show the session model from DSH modelSelection', async (t) => {
+  const selection = { lastUsed: { provider: 'deepseek-account', model: 'deepseek-flash' }, next: { provider: 'deepseek-account', model: 'deepseek-pro', reasoningEffort: 'high' } }
+  const bridge = await startBridge({
+    controller: {
+      list: async () => ({ items: [{ sessionId: 'session-old', cwd: 'D:\\w', updatedAt: Date.now(), projections: { values: { modelSelection: selection } } }] }),
+    },
+  })
+  t.after(() => bridge.stop())
+  const read = await (await bridge.get('/sessions/session-old')).json()
+  assert.deepEqual(read.model, { next: 'deepseek-account/deepseek-pro', reasoningEffort: 'high', lastUsed: 'deepseek-account/deepseek-flash' })
+  const mcp = startMcp({ env: { DSH_BRIDGE_STATE_FILE: bridge.file, DSH_AGENT_NAME: 'test' } })
+  t.after(() => mcp.stop())
+  const [row] = await withTimeout(mcp.callTool('dsh_list', {}), 10000, 'dsh_list')
+  assert.equal(row.model, 'deepseek-account/deepseek-pro')
+})
+
 test('MCP: dsh_models, dsh_send with a model, and dsh_set_model', async (t) => {
   const dsh = fakeDsh()
-  const bridge = await startBridge({ controller: dsh.controller })
+  const workspaceRegistry = { list: () => [], create: async (path, title) => ({ id: 'w1', title, path }) }
+  const bridge = await startBridge({ controller: dsh.controller, context: { workspaceRegistry } })
   t.after(() => bridge.stop())
   const mcp = startMcp({ env: { DSH_BRIDGE_STATE_FILE: bridge.file, DSH_AGENT_NAME: 'test' } })
   t.after(() => mcp.stop())
