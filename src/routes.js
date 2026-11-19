@@ -8,7 +8,9 @@ import { validatePrompt } from './prompt.js'
 import { agentNameOf, clip, compact } from './transcript.js'
 import { resolveWorkspace, wsInfo } from './workspaces.js'
 
-export function createHandler({ dsh, hub, status, authorized, audit, prompter, access, config, health }) {
+export function createHandler({ dsh, hub, status, authorized, audit, prompter, access, messenger, config, health, port }) {
+  // X3: only loopback names for this port; anything else is a rebinding or a mistake.
+  const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`])
   const { counters, lastSeen } = status
   const { prompt, modelCatalog, selectModel, agentOfRequest } = prompter
 
@@ -47,6 +49,7 @@ export function createHandler({ dsh, hub, status, authorized, audit, prompter, a
     })
     if (url.pathname !== '/events') { counters.total++; lastSeen.request = entry.time; status.track(entry) }
     try {
+      if (port && !allowedHosts.has(String(req.headers.host ?? '').toLowerCase())) return send(res, 403, { error: 'Host not allowed' })
       if (!authorized(req.headers.authorization)) {
         counters.unauthorized++
         // X4: an unauthenticated caller must not choose the name shown to the
@@ -69,9 +72,17 @@ export function createHandler({ dsh, hub, status, authorized, audit, prompter, a
       if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, health())
 
       if (req.method === 'GET' && url.pathname === '/events') {
-        const since = Number(url.searchParams.get('since') ?? req.headers['last-event-id'] ?? hub.lastId())
+        const raw = url.searchParams.get('since') ?? req.headers['last-event-id']
+        if (raw !== undefined && raw !== null && !/^\d+$/.test(String(raw))) return send(res, 400, { error: 'since must be a non-negative integer' })
+        const since = raw === undefined || raw === null ? hub.lastId() : Number(raw)
         if (!hub.attach(res, since)) return send(res, 429, { error: 'Too many event streams' })
         return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/ping') {
+        const body = await readBody(req)
+        entry.kind = 'ping'
+        return send(res, 200, await messenger.send(body, entry.agent))
       }
 
       if (req.method === 'GET' && url.pathname === '/models') return send(res, 200, flattenCatalog(await modelCatalog()))

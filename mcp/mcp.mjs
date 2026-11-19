@@ -76,6 +76,24 @@ const tools = [
     run: async ({ sessionId, model, reasoningEffort }) => call('POST', `/sessions/${encodeURIComponent(await resolveId(sessionId))}/model`, { model, reasoningEffort }),
   },
   {
+    name: 'bridge_ping',
+    description: 'Send a short message to another agent: a review request, a result, a question or a done notice. The receiver is an agent name (it wakes with `dsh-bridge watch --agent <name> --until message --exit`) or dsh:<session id> (delivered into that DSH session through its queue). Keep the summary short and point to the work with ref; the receiver reads the details. Your sender name is DSH_AGENT_NAME.',
+    annotations: write('Send a message to an agent'),
+    inputSchema: {
+      type: 'object',
+      required: ['to', 'kind', 'summary'],
+      properties: {
+        to: { type: 'string', maxLength: 128 },
+        kind: { type: 'string', enum: ['ping', 'review-request', 'review-result', 'question', 'done'] },
+        summary: { type: 'string', minLength: 1, maxLength: 2000 },
+        inReplyTo: { type: 'string', description: 'msg-<id> of the message you answer' },
+        threadId: { type: 'string', description: 'thr-<id> to continue a thread' },
+        ref: { type: 'object', properties: { repo: { type: 'string' }, branch: { type: 'string' }, sha: { type: 'string' }, pr: { type: 'integer' } } },
+      },
+    },
+    run: async (args) => call('POST', '/ping', args),
+  },
+  {
     name: 'dsh_profiles',
     description: 'List the access profiles the owner defined: name, description, cwd, extra writable folders and preset. Pass a profile name as `profile` to dsh_send to start a session with it.',
     annotations: readOnly('List access profiles'),
@@ -115,7 +133,7 @@ const tools = [
         sessionId: { type: 'string' },
         cwd: { type: 'string', maxLength: 4096, description: 'absolute, existing working folder for a new session; it joins the workspace for that folder' },
         workspace: { type: 'string', maxLength: 4096, description: 'DSH workspace title or id for a new session' },
-        mode: { type: 'string', enum: ['followup', 'steer'] },
+        mode: { type: 'string', enum: ['followup', 'queue', 'steer'], description: 'followup (default) refuses a busy session; queue waits in the DSH queue; steer interrupts' },
         model: { type: 'string', maxLength: 200, description: 'model for this work: "provider/model" from dsh_models, a unique model id, or a model name. New sessions otherwise start on the DSH default.' },
         reasoningEffort: { type: 'string', maxLength: 40, description: 'reasoning effort for that model, from dsh_models' },
         profile: { type: 'string', maxLength: 64, description: 'new session only: an access profile from dsh_profiles; it sets the cwd, preset and extra writable folders' },

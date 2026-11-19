@@ -119,7 +119,8 @@ test('watch --agent --until message --exit prints one JSON line and exits 0', as
   t.after(() => child.kill())
   let out = ''
   child.stdout.on('data', (c) => { out += c })
-  await new Promise((resolve) => setTimeout(resolve, 800))
+  // Wait until the watcher's event stream is connected, so no ping is missed.
+  await withTimeout((async () => { while ((await (await bridge.get('/health')).json()).clients < 1) await new Promise((r) => setTimeout(r, 100)) })(), 8000, 'watcher connect')
   await bridge.post('/ping', { to: 'someone-else', kind: 'ping', summary: 'not for you' })
   await bridge.post('/ping', { to: 'reviewer', kind: 'review-request', summary: 'for you' })
   const code = await withTimeout(new Promise((resolve) => child.once('close', resolve)), 8000, 'watch exit')

@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 // Print one line per DSH notification (turn end, error, pending input).
 // Made for any MCP client's Monitor tool: each stdout line becomes a notification.
-// Usage: node watch.mjs [--session <id>] [--all]   (--all also prints status/user-message)
+// Usage: node watch.mjs [--session <id>] [--agent <name>] [--all]
+//        node watch.mjs --agent <name> --until message|turn-end|pending-input[,…] --exit
+// --all also prints status and user-message events. --agent shows the messages
+// addressed to that agent. With --exit, the watcher prints the first matching
+// event as one JSON line and exits 0: a background command that ends when the
+// awaited event arrives (R3.5).
 import { call, follow } from './lib.mjs'
 
 const args = process.argv.slice(2)
@@ -25,6 +30,12 @@ async function resolveSession(id) {
   }
 }
 const only = await resolveSession(wanted)
+const agent = args.includes('--agent') ? args[args.indexOf('--agent') + 1] : undefined
+const until = args.includes('--until') ? args[args.indexOf('--until') + 1].split(',') : undefined
+const exitOnFirst = args.includes('--exit')
+if (exitOnFirst && !until) { console.error('--exit needs --until <event types>'); process.exit(2) }
+/** Does this event concern the watcher at all? */
+const relevant = (ev) => (ev.type === 'message' ? !agent || ev.to === agent : !only || ev.sessionId === only)
 const all = args.includes('--all')
 const oneLine = (s, n = 300) => String(s ?? '').replace(/\s+/g, ' ').slice(0, n)
 let bootId
@@ -34,7 +45,11 @@ for (;;) {
     for await (const ev of follow({ retryMs: 5000 })) {
       if (ev.bootId && bootId && ev.bootId !== bootId) console.log(`[dsh bridge] DSH restarted; cursor reset to the new boot ${ev.bootId.slice(0, 8)}`)
       bootId = ev.bootId ?? bootId
-      if (only && ev.sessionId !== only) continue
+      if (!relevant(ev)) continue
+      if (until?.includes(ev.type) && !(ev.type === 'pending-input' && !(ev.kinds ?? []).length)) {
+        if (exitOnFirst) { console.log(JSON.stringify(ev)); process.exit(0) }
+      }
+      if (ev.type === 'message') { console.log(`[dsh message] ${ev.from} -> ${ev.to} (${ev.kind}, ${ev.threadId}, hop ${ev.hop}) :: ${oneLine(ev.summary)}`); continue }
       if (ev.type === 'turn-end') console.log(`[dsh turn-end] ${ev.sessionId} "${oneLine(ev.title, 60)}" (${ev.reason}) :: ${oneLine(ev.lastText)}`)
       else if (ev.type === 'error') console.log(`[dsh error] ${ev.sessionId} :: ${oneLine(ev.message)}`)
       else if (ev.type === 'pending-input') console.log(`[dsh pending-input] ${ev.sessionId} (${(ev.kinds ?? []).join(', ')})`)
