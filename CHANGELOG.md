@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- W0 spike notes in `docs/spikes/`: per-session writable roots work for DSH file tools but not for shell commands on Windows, and do not survive a restart; mode and preset control from a plugin; the structured form of sandbox denials; plugins can only add `DSH_*` shell variables; a draft upstream issue.
+- W4 `GET /sessions/:id/denials` returns the session's sandbox denials (tool, kind, code, mode, path). `scripts/access-report.mjs [--session|--workspace] [--since 7d] [--json]` groups them by folder with one suggestion per group. Read-only.
+- W5.1 `docs/access-guide.md`: how to keep work inside the session cwd so sessions can stay in `workspace-write`.
+
 ## 0.6.2
 
 - R1.1 `turn-end` reports `turn`, `reason` (`completed` / `cancelled` / `error`), `reasonKind` and only that turn's text, so a cancelled turn no longer shows the previous answer. `dsh_wait` returns `cancelled: true`.

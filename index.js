@@ -16,6 +16,7 @@ import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { parseDenials } from './src/denials.js'
 
 const { version } = createRequire(import.meta.url)('./package.json')
 /** Wire contract for HTTP and SSE. Bump only for a breaking change. */
@@ -471,6 +472,14 @@ export function apply(ctx, config = {}) {
           counters.reads++; entry.kind = 'read'
           const row = (await sc.list({}, signal)).items.find((i) => i.sessionId === parts[1])
           return send(res, 200, { sessionId: parts[1], title: row?.projections?.values?.title, cwd: row?.cwd, running: state.running, pendingInput: state.pendingInput, cursor: history.cursor, hasMore: history.hasMore, entries: compact(events, limit, agentOfRequest) })
+        }
+        if (req.method === 'GET' && parts.length === 3 && parts[2] === 'denials') {
+          // W4: read-only, structured sandbox denials for the access report.
+          const history = await sc.events({ address: { kind: 'session', sessionId: parts[1] }, maxMessages: 1000 }, signal)
+          const events = (history.records ?? []).map((record) => record.event).filter(Boolean)
+          counters.reads++; entry.kind = 'denials'
+          const row = (await sc.list({}, signal)).items.find((i) => i.sessionId === parts[1])
+          return send(res, 200, { sessionId: parts[1], cwd: row?.cwd, hasMore: history.hasMore, denials: parseDenials(events) })
         }
         if (req.method === 'POST' && parts.length === 1) {
           const body = await readBody(req)
